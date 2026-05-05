@@ -30,6 +30,10 @@ class TdClientManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
 
+    // Rate-limit for optimizeStorage: at most once every 5 minutes
+    private var lastOptimizeTime = 0L
+    private val OPTIMIZE_INTERVAL_MS = 5 * 60 * 1000L
+
     // Authentication state flow
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
     val authState: StateFlow<AuthState> = _authState
@@ -329,17 +333,31 @@ class TdClientManager(private val context: Context) {
      */
     suspend fun searchChatMedia(chatId: Long, limit: Int = 100): List<MediaItem> {
         return try {
-            // Force sync latest history for this chat to ensure search results are up to date
+            // Step 1: Open chat so TDLib actively subscribes to new messages for this chat.
+            // This is required for searchChatMessages to find recently added files.
+            try {
+                val openChatReq = JSONObject().apply {
+                    put("@type", "openChat")
+                    put("chat_id", chatId)
+                }
+                sendAsync(openChatReq)
+                Log.d(TAG, "openChat sent for $chatId")
+            } catch (e: Exception) {
+                Log.w(TAG, "openChat failed for $chatId, continuing anyway", e)
+            }
+
+            // Step 2: Pull last 100 messages from Telegram servers into local DB.
+            // Without this, searchChatMessages only sees stale local data.
             try {
                 val historyReq = JSONObject().apply {
                     put("@type", "getChatHistory")
                     put("chat_id", chatId)
                     put("from_message_id", 0)
                     put("offset", 0)
-                    put("limit", 20) // Only sync the last 20 messages for speed
+                    put("limit", 100)
                 }
                 sendAsync(historyReq)
-                Log.d(TAG, "Chat history synced for $chatId")
+                Log.d(TAG, "Chat history synced (100 msgs) for $chatId")
             } catch (e: Exception) {
                 Log.w(TAG, "Chat history sync failed for $chatId, proceeding with local search", e)
             }
@@ -369,8 +387,22 @@ class TdClientManager(private val context: Context) {
             }
 
             // Deduplicate by file ID and sort by date (newest first - implicit from search)
-            mediaItems.distinctBy { it.fileId }
+            val result = mediaItems.distinctBy { it.fileId }
                 .sortedByDescending { it.messageId }
+
+            // Step 3: Close the chat to free TDLib resources (we only needed it for sync)
+            try {
+                val closeChatReq = JSONObject().apply {
+                    put("@type", "closeChat")
+                    put("chat_id", chatId)
+                }
+                sendAsync(closeChatReq)
+                Log.d(TAG, "closeChat sent for $chatId")
+            } catch (e: Exception) {
+                Log.w(TAG, "closeChat failed for $chatId", e)
+            }
+
+            result
 
         } catch (e: Exception) {
             Log.e(TAG, "Error searching media", e)
@@ -584,8 +616,7 @@ class TdClientManager(private val context: Context) {
     }
     
     private suspend fun readFilePartInternal(fileId: Int, offset: Long, count: Long): ByteArray? {
-        // First, ensure we have fresh metadata and trigger download of the specific part
-        // Calling getFile/downloadFile ensures TDLib has active remote connection details
+        // Refresh file metadata so TDLib has active remote connection details
         try {
             val getFileReq = JSONObject().apply {
                 put("@type", "getFile")
@@ -596,6 +627,7 @@ class TdClientManager(private val context: Context) {
             Log.w(TAG, "File metadata refresh failed for $fileId", e)
         }
 
+        // Request download of just this chunk (synchronous = true waits for the part to be ready)
         val downloadRequest = JSONObject().apply {
             put("@type", "downloadFile")
             put("file_id", fileId)
@@ -620,7 +652,7 @@ class TdClientManager(private val context: Context) {
             }
         }
 
-        // Use readFilePart if available
+        // Fallback: use TDLib's readFilePart API
         val readRequest = JSONObject().apply {
             put("@type", "readFilePart")
             put("file_id", fileId)
@@ -633,8 +665,35 @@ class TdClientManager(private val context: Context) {
         if (dataBase64.isNotEmpty()) {
             return android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
         }
-        
+
         return null
+    }
+
+    /**
+     * Resolve a remote file ID string to a TDLib local file ID.
+     * Used as a fallback when a newly discovered file's fileId isn't yet registered
+     * in TDLib's local database (e.g. a freshly sent message on another device).
+     */
+    suspend fun getFileByRemoteId(remoteFileId: String): Int? {
+        val request = JSONObject().apply {
+            put("@type", "getRemoteFile")
+            put("remote_file_id", remoteFileId)
+            put("file_type", JSONObject().put("@type", "fileTypeVideo"))
+        }
+        return try {
+            val response = sendAsync(request)
+            val resolvedId = response.optInt("id", -1)
+            if (resolvedId > 0) {
+                Log.d(TAG, "getRemoteFile resolved $remoteFileId -> fileId=$resolvedId")
+                resolvedId
+            } else {
+                Log.w(TAG, "getRemoteFile returned invalid id for $remoteFileId")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "getRemoteFile failed for $remoteFileId", e)
+            null
+        }
     }
 
     /**
@@ -657,16 +716,21 @@ class TdClientManager(private val context: Context) {
 
     private fun handleFileUpdate(json: JSONObject) {
         // Handle file download progress updates
-        val file = json.optJSONObject("file")
-        if (file != null) {
-            val fileId = file.getInt("id")
-            val local = file.optJSONObject("local")
-            if (local != null) {
-                val isDownloadingCompleted = local.optBoolean("is_downloading_completed", false)
-                val downloadedSize = local.optLong("downloaded_size", 0)
-                Log.d(TAG, "File $fileId: downloaded=$downloadedSize, completed=$isDownloadingCompleted")
-            }
-            // Trigger storage optimization on every update (aggressive)
+        val file = json.optJSONObject("file") ?: return
+        val fileId = file.getInt("id")
+        val local = file.optJSONObject("local")
+        if (local != null) {
+            val isDownloadingCompleted = local.optBoolean("is_downloading_completed", false)
+            val downloadedSize = local.optLong("downloaded_size", 0)
+            Log.d(TAG, "File $fileId: downloaded=$downloadedSize, completed=$isDownloadingCompleted")
+        }
+        // Rate-limited storage optimization:
+        // updateFile fires on every streamed chunk, so we guard against calling
+        // optimizeStorage() too often — which would delete chunks mid-playback.
+        // Startup call in authorizationStateReady is still unconditional.
+        val now = System.currentTimeMillis()
+        if (now - lastOptimizeTime > OPTIMIZE_INTERVAL_MS) {
+            lastOptimizeTime = now
             optimizeStorage()
         }
     }

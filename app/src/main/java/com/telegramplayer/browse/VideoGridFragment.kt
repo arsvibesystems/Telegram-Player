@@ -135,7 +135,7 @@ class VideoGridFragment : VerticalGridSupportFragment() {
     }
 
     private fun playWithSelectedPlayer(mediaItem: MediaItem) {
-        proxyServer.registerFile(mediaItem.fileId, mediaItem.fileName, mediaItem.size)
+        proxyServer.registerFile(mediaItem.fileId, mediaItem.fileName, mediaItem.size, mediaItem.remoteFileId)
         val streamUrl = proxyServer.getStreamUrl(mediaItem.fileId)
         
         Toast.makeText(context, "Playing: ${mediaItem.title}", Toast.LENGTH_SHORT).show()

@@ -35,15 +35,20 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
     // Cache file sizes to avoid repeated lookups
     private val fileSizeCache = ConcurrentHashMap<Int, Long>()
     private val fileNameCache = ConcurrentHashMap<Int, String>()
+    // Cache remote file IDs for resolving newly discovered files
+    private val remoteFileIdCache = ConcurrentHashMap<Int, String>()
     
     // Track last access time and cleanup runnables for each file
     private val lastAccessTime = ConcurrentHashMap<Int, Long>()
     private val cleanupRunnables = ConcurrentHashMap<Int, Runnable>()
     private val handler = Handler(Looper.getMainLooper())
 
-    fun registerFile(fileId: Int, fileName: String, fileSize: Long) {
+    fun registerFile(fileId: Int, fileName: String, fileSize: Long, remoteFileId: String = "") {
         fileSizeCache[fileId] = fileSize
         fileNameCache[fileId] = fileName
+        if (remoteFileId.isNotEmpty()) {
+            remoteFileIdCache[fileId] = remoteFileId
+        }
     }
 
     fun getStreamUrl(fileId: Int): String {
@@ -78,6 +83,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
                 // Clear local caches
                 fileSizeCache.remove(fileId)
                 fileNameCache.remove(fileId)
+                remoteFileIdCache.remove(fileId)
                 lastAccessTime.remove(fileId)
                 cleanupRunnables.remove(fileId)
             }
@@ -170,13 +176,33 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         val contentLength = endByte - startByte + 1
         Log.d(TAG, "Serving range: $startByte-$endByte/$fileSize (${contentLength} bytes)")
 
-        // Fetch the data chunk
-        val data = runBlocking {
+        // Fetch the data chunk; if it fails, attempt to resolve via remoteFileId
+        var data = runBlocking {
             TelegramPlayerApp.getTdClient().readFilePart(
                 fileId,
                 startByte,
                 contentLength.coerceAtMost(CHUNK_SIZE)
             )
+        }
+
+        // Fallback: newly added files may have an unregistered local fileId.
+        // Use remoteFileId to force-register the file with TDLib, then retry.
+        if ((data == null || data.isEmpty()) && remoteFileIdCache.containsKey(fileId)) {
+            val remoteId = remoteFileIdCache[fileId]!!
+            Log.w(TAG, "readFilePart returned null for fileId=$fileId, trying getRemoteFile($remoteId)")
+            val resolvedId = runBlocking {
+                TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId)
+            }
+            if (resolvedId != null && resolvedId != fileId) {
+                Log.d(TAG, "Resolved new fileId=$resolvedId, retrying readFilePart")
+                data = runBlocking {
+                    TelegramPlayerApp.getTdClient().readFilePart(
+                        resolvedId,
+                        startByte,
+                        contentLength.coerceAtMost(CHUNK_SIZE)
+                    )
+                }
+            }
         }
 
         if (data == null || data.isEmpty()) {
@@ -205,9 +231,22 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
     private fun handleFullRequest(fileId: Int, fileSize: Long, mimeType: String): Response {
         Log.d(TAG, "Serving full file (first chunk): fileId=$fileId, size=$fileSize")
 
-        // For full request, return first chunk and indicate range support
-        val data = runBlocking {
+        // For full request, return first chunk; fallback to remoteFileId resolution if needed
+        var data = runBlocking {
             TelegramPlayerApp.getTdClient().readFilePart(fileId, 0, CHUNK_SIZE)
+        }
+
+        if ((data == null || data.isEmpty()) && remoteFileIdCache.containsKey(fileId)) {
+            val remoteId = remoteFileIdCache[fileId]!!
+            Log.w(TAG, "Full request readFilePart null for fileId=$fileId, trying getRemoteFile($remoteId)")
+            val resolvedId = runBlocking {
+                TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId)
+            }
+            if (resolvedId != null && resolvedId != fileId) {
+                data = runBlocking {
+                    TelegramPlayerApp.getTdClient().readFilePart(resolvedId, 0, CHUNK_SIZE)
+                }
+            }
         }
 
         if (data == null || data.isEmpty()) {
