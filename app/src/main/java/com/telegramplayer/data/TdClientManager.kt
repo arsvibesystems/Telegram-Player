@@ -24,7 +24,7 @@ class TdClientManager(private val context: Context) {
         private const val MAX_FILE_AGE_SECONDS = 7 * 24 * 60 * 60 // 7 days
     }
 
-    private val clientId: Int = JsonClient.td_create_client_id()
+    private var clientId: Int = JsonClient.td_create_client_id()
     private val requestId = AtomicLong(1)
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -156,9 +156,21 @@ class TdClientManager(private val context: Context) {
                 _authState.value = AuthState.Authorized
                 // Clean up old cache files on startup
                 optimizeStorage()
+                // Force sync chats on startup
+                loadChats()
             }
             "authorizationStateClosed" -> {
                 _authState.value = AuthState.Closed
+                
+                // Clear the corrupted/closed database directory to ensure a fresh session
+                val dbDir = java.io.File(context.filesDir, "tdlib")
+                if (dbDir.exists()) {
+                    dbDir.deleteRecursively()
+                }
+                
+                // TDLib client is dead after Closed state. We must recreate it.
+                clientId = io.github.up9cloud.td.JsonClient.td_create_client_id()
+                triggerAuthorizationStateUpdate()
             }
         }
     }
@@ -215,6 +227,16 @@ class TdClientManager(private val context: Context) {
         val request = JSONObject().apply {
             put("@type", "checkAuthenticationPassword")
             put("password", password)
+            put("@extra", getNextRequestId())
+        }
+        send(request.toString())
+    }
+
+    fun loadChats(limit: Int = 100) {
+        val request = JSONObject().apply {
+            put("@type", "loadChats")
+            put("chat_list", JSONObject().put("@type", "chatListMain"))
+            put("limit", limit)
             put("@extra", getNextRequestId())
         }
         send(request.toString())
@@ -307,6 +329,21 @@ class TdClientManager(private val context: Context) {
      */
     suspend fun searchChatMedia(chatId: Long, limit: Int = 100): List<MediaItem> {
         return try {
+            // Force sync latest history for this chat to ensure search results are up to date
+            try {
+                val historyReq = JSONObject().apply {
+                    put("@type", "getChatHistory")
+                    put("chat_id", chatId)
+                    put("from_message_id", 0)
+                    put("offset", 0)
+                    put("limit", 20) // Only sync the last 20 messages for speed
+                }
+                sendAsync(historyReq)
+                Log.d(TAG, "Chat history synced for $chatId")
+            } catch (e: Exception) {
+                Log.w(TAG, "Chat history sync failed for $chatId, proceeding with local search", e)
+            }
+
             val videoDeferred = scope.async(Dispatchers.IO) {
                 searchMessagesByType(chatId, limit, "searchMessagesFilterVideo")
             }
@@ -547,7 +584,18 @@ class TdClientManager(private val context: Context) {
     }
     
     private suspend fun readFilePartInternal(fileId: Int, offset: Long, count: Long): ByteArray? {
-        // First, ensure we have the remote file info
+        // First, ensure we have fresh metadata and trigger download of the specific part
+        // Calling getFile/downloadFile ensures TDLib has active remote connection details
+        try {
+            val getFileReq = JSONObject().apply {
+                put("@type", "getFile")
+                put("file_id", fileId)
+            }
+            sendAsync(getFileReq)
+        } catch (e: Exception) {
+            Log.w(TAG, "File metadata refresh failed for $fileId", e)
+        }
+
         val downloadRequest = JSONObject().apply {
             put("@type", "downloadFile")
             put("file_id", fileId)
