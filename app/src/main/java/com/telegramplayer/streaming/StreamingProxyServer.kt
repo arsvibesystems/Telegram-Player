@@ -116,21 +116,41 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Invalid file ID")
         }
 
-        // Get file size
-        val fileSize = fileSizeCache[fileId] ?: runBlocking {
+        // Get file size — may be 0 for newly received files not yet resolved by TDLib
+        var resolvedFileId = fileId
+        var fileSize = fileSizeCache[fileId] ?: runBlocking {
             TelegramPlayerApp.getTdClient().getFileSize(fileId).also {
-                fileSizeCache[fileId] = it
+                if (it > 0) fileSizeCache[fileId] = it
+            }
+        }
+
+        // Size still 0? Attempt resolution via remoteFileId (file received while app was closed)
+        if (fileSize <= 0 && remoteFileIdCache.containsKey(fileId)) {
+            val remoteId = remoteFileIdCache[fileId]!!
+            Log.w(TAG, "fileId=$fileId size=0, resolving via remoteFileId in serve()")
+            val newId = runBlocking { TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId) }
+            if (newId != null) {
+                resolvedFileId = newId
+                fileSize = runBlocking {
+                    TelegramPlayerApp.getTdClient().getFileSize(newId).also {
+                        if (it > 0) {
+                            fileSizeCache[newId] = it
+                            fileNameCache[newId] = fileNameCache[fileId] ?: "video.mp4"
+                            remoteFileIdCache[newId] = remoteId
+                        }
+                    }
+                }
             }
         }
 
         if (fileSize <= 0) {
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "File not found")
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "File not found or size unknown")
         }
         
         // Track file access for cleanup scheduling
-        markAccessed(fileId)
+        markAccessed(resolvedFileId)
 
-        val fileName = fileNameCache[fileId] ?: "video.mp4"
+        val fileName = fileNameCache[resolvedFileId] ?: fileNameCache[fileId] ?: "video.mp4"
         val mimeType = getMimeType(fileName)
 
         // Parse Range header
@@ -138,9 +158,9 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         Log.d(TAG, "Range header: $rangeHeader, File size: $fileSize")
 
         return if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-            handleRangeRequest(fileId, fileSize, rangeHeader, mimeType)
+            handleRangeRequest(resolvedFileId, fileSize, rangeHeader, mimeType)
         } else {
-            handleFullRequest(fileId, fileSize, mimeType)
+            handleFullRequest(resolvedFileId, fileSize, mimeType)
         }
     }
 

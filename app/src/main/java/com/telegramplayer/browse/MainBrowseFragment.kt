@@ -130,7 +130,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 val chats = withContext(Dispatchers.IO) {
                     tdClient.getChats(150)
                 }
-                
+
                 rowsAdapter.clear()
 
                 // Group chats by type
@@ -142,7 +142,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 if (privateChats.isNotEmpty()) {
                     addChatRow("💬 Private Chats", privateChats)
                 }
-                
+
                 // Row 2: Groups
                 if (groups.isNotEmpty()) {
                     addChatRow("👥 Groups", groups)
@@ -152,7 +152,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 if (channels.isNotEmpty()) {
                     addChatRow("📺 Channels", channels)
                 }
-                
+
                 // Settings Row
                 addSettingsRow()
 

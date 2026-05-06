@@ -616,7 +616,9 @@ class TdClientManager(private val context: Context) {
     }
     
     private suspend fun readFilePartInternal(fileId: Int, offset: Long, count: Long): ByteArray? {
-        // Refresh file metadata so TDLib has active remote connection details
+        val chunkSize = count.coerceAtMost(CHUNK_SIZE)
+
+        // Step 1: Refresh file metadata so TDLib has active remote connection details
         try {
             val getFileReq = JSONObject().apply {
                 put("@type", "getFile")
@@ -627,46 +629,79 @@ class TdClientManager(private val context: Context) {
             Log.w(TAG, "File metadata refresh failed for $fileId", e)
         }
 
-        // Request download of just this chunk (synchronous = true waits for the part to be ready)
+        // Step 2: Request download of this chunk (synchronous = true blocks until data is ready)
         val downloadRequest = JSONObject().apply {
             put("@type", "downloadFile")
             put("file_id", fileId)
             put("priority", 32)
             put("offset", offset)
-            put("limit", count)
+            put("limit", chunkSize)
             put("synchronous", true)
         }
 
         val downloadResponse = sendAsync(downloadRequest)
-        val localPath = downloadResponse.optJSONObject("local")?.optString("path", "") ?: ""
+        val localObj = downloadResponse.optJSONObject("local")
+        val localPath = localObj?.optString("path", "") ?: ""
+        val isCompleted = localObj?.optBoolean("is_downloading_completed", false) ?: false
+        val downloadedPrefixSize = localObj?.optLong("downloaded_prefix_size", 0L) ?: 0L
+        val downloadedSize = localObj?.optLong("downloaded_size", 0L) ?: 0L
 
+        Log.d(TAG, "downloadFile response: fileId=$fileId, offset=$offset, " +
+              "path=$localPath, completed=$isCompleted, " +
+              "prefixSize=$downloadedPrefixSize, downloadedSize=$downloadedSize")
+
+        // Step 3: Try reading from the local cache file
+        // TDLib's cache file is the FULL file — data sits at its natural file offset
         if (localPath.isNotEmpty()) {
             val file = File(localPath)
-            if (file.exists()) {
-                return file.inputStream().use { input ->
-                    input.skip(offset)
-                    val buffer = ByteArray(count.toInt().coerceAtMost(CHUNK_SIZE.toInt()))
-                    val bytesRead = input.read(buffer)
-                    if (bytesRead > 0) buffer.copyOf(bytesRead) else null
+            if (file.exists() && file.length() > offset) {
+                try {
+                    return file.inputStream().use { input ->
+                        val skipped = input.skip(offset)
+                        if (skipped == offset) {
+                            val buffer = ByteArray(chunkSize.toInt())
+                            val bytesRead = input.read(buffer)
+                            if (bytesRead > 0) {
+                                Log.d(TAG, "Read $bytesRead bytes from local file at offset=$offset")
+                                buffer.copyOf(bytesRead)
+                            } else {
+                                Log.w(TAG, "Local file read returned 0 bytes at offset=$offset")
+                                null
+                            }
+                        } else {
+                            Log.w(TAG, "Skip failed: wanted $offset, got $skipped")
+                            null
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error reading local file at offset=$offset", e)
                 }
+            } else {
+                Log.w(TAG, "Local file missing or too small: exists=${file.exists()}, " +
+                      "fileLen=${if (file.exists()) file.length() else -1}, requestedOffset=$offset")
             }
         }
 
-        // Fallback: use TDLib's readFilePart API
+        // Step 4: Fallback — use TDLib's readFilePart API (returns data as base64)
+        Log.d(TAG, "Falling back to readFilePart API for fileId=$fileId offset=$offset")
         val readRequest = JSONObject().apply {
             put("@type", "readFilePart")
             put("file_id", fileId)
             put("offset", offset)
-            put("count", count.coerceAtMost(CHUNK_SIZE))
+            put("count", chunkSize)
         }
 
         val response = sendAsync(readRequest)
         val dataBase64 = response.optString("data", "")
         if (dataBase64.isNotEmpty()) {
-            return android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+            val decoded = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+            Log.d(TAG, "readFilePart returned ${decoded.size} bytes")
+            return decoded
         }
 
+        Log.e(TAG, "Both local file and readFilePart failed for fileId=$fileId offset=$offset")
         return null
+
     }
 
     /**
@@ -698,19 +733,69 @@ class TdClientManager(private val context: Context) {
 
     /**
      * Get file size using Long for 4GB support.
+     * Falls back to resolving via remoteFileId if expected_size is 0
+     * (common for files received while the app was not running).
      */
     suspend fun getFileSize(fileId: Int): Long {
         val request = JSONObject().apply {
             put("@type", "getFile")
             put("file_id", fileId)
         }
-
         return try {
             val response = sendAsync(request)
-            response.getLong("expected_size")
+            val size = response.optLong("expected_size", 0L)
+            if (size > 0L) size else {
+                // expected_size can be 0 for files TDLib hasn't fully resolved yet.
+                // Try the remote object which carries the authoritative size.
+                val remote = response.optJSONObject("remote")
+                val remoteId = remote?.optString("id", "") ?: ""
+                if (remoteId.isNotEmpty()) {
+                    getFileSizeByRemoteId(remoteId)
+                } else 0L
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting file size", e)
+            Log.e(TAG, "Error getting file size for $fileId", e)
             0L
+        }
+    }
+
+    /**
+     * Resolve file size by remote ID — used when local expected_size is 0.
+     */
+    private suspend fun getFileSizeByRemoteId(remoteFileId: String): Long {
+        return try {
+            val request = JSONObject().apply {
+                put("@type", "getRemoteFile")
+                put("remote_file_id", remoteFileId)
+                put("file_type", JSONObject().put("@type", "fileTypeVideo"))
+            }
+            val response = sendAsync(request)
+            response.optLong("expected_size", 0L)
+        } catch (e: Exception) {
+            Log.w(TAG, "getFileSizeByRemoteId failed for $remoteFileId", e)
+            0L
+        }
+    }
+
+    /**
+     * Pre-resolves a file for streaming by ensuring TDLib knows the remote file.
+     * Call this before registering a file with the proxy when the file was
+     * received while the app was not running (fileId may be stale).
+     * Returns the best available fileId (resolved or original).
+     */
+    suspend fun prepareFileForStreaming(fileId: Int, remoteFileId: String): Int {
+        return try {
+            // First check if the current fileId yields a valid size
+            val existingSize = getFileSize(fileId)
+            if (existingSize > 0L) return fileId
+
+            // Size is 0 — re-register via remoteFileId to get TDLib to refresh its records
+            Log.w(TAG, "fileId=$fileId has size=0, resolving via remoteFileId")
+            val resolvedId = getFileByRemoteId(remoteFileId)
+            resolvedId ?: fileId
+        } catch (e: Exception) {
+            Log.e(TAG, "prepareFileForStreaming failed for fileId=$fileId", e)
+            fileId
         }
     }
 

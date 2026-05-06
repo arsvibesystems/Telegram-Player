@@ -135,30 +135,52 @@ class VideoGridFragment : VerticalGridSupportFragment() {
     }
 
     private fun playWithSelectedPlayer(mediaItem: MediaItem) {
-        proxyServer.registerFile(mediaItem.fileId, mediaItem.fileName, mediaItem.size, mediaItem.remoteFileId)
-        val streamUrl = proxyServer.getStreamUrl(mediaItem.fileId)
-        
-        Toast.makeText(context, "Playing: ${mediaItem.title}", Toast.LENGTH_SHORT).show()
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(Uri.parse(streamUrl), mediaItem.mimeType)
-            putExtra("title", mediaItem.title)
-            putExtra("secure_uri", true)
-        }
-
-        val playerManager = com.telegramplayer.data.PlayerManager(requireContext())
-        val selectedPackage = playerManager.getSelectedPlayer()
-
-        if (selectedPackage != null) {
-            intent.setPackage(selectedPackage)
+        lifecycleScope.launch {
             try {
-                startActivity(intent)
+                // Pre-resolve the fileId in case this is a newly received file
+                // (sent while the app was closed) where expected_size may be 0.
+                val resolvedFileId = withContext(Dispatchers.IO) {
+                    tdClient.prepareFileForStreaming(mediaItem.fileId, mediaItem.remoteFileId)
+                }
+
+                // Get confirmed file size for the proxy
+                val confirmedSize = if (resolvedFileId != mediaItem.fileId) {
+                    withContext(Dispatchers.IO) { tdClient.getFileSize(resolvedFileId) }
+                } else {
+                    // Use existing size if non-zero, else re-fetch
+                    if (mediaItem.size > 0L) mediaItem.size
+                    else withContext(Dispatchers.IO) { tdClient.getFileSize(resolvedFileId) }
+                }
+
+                proxyServer.registerFile(resolvedFileId, mediaItem.fileName, confirmedSize, mediaItem.remoteFileId)
+                val streamUrl = proxyServer.getStreamUrl(resolvedFileId)
+
+                Toast.makeText(context, "Playing: ${mediaItem.title}", Toast.LENGTH_SHORT).show()
+
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(Uri.parse(streamUrl), mediaItem.mimeType)
+                    putExtra("title", mediaItem.title)
+                    putExtra("secure_uri", true)
+                }
+
+                val playerManager = com.telegramplayer.data.PlayerManager(requireContext())
+                val selectedPackage = playerManager.getSelectedPlayer()
+
+                if (selectedPackage != null) {
+                    intent.setPackage(selectedPackage)
+                    try {
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Selected player not found", Toast.LENGTH_SHORT).show()
+                        launchPlayerChooser(intent)
+                    }
+                } else {
+                    launchPlayerChooser(intent)
+                }
             } catch (e: Exception) {
-                Toast.makeText(context, "Selected player not found", Toast.LENGTH_SHORT).show()
-                launchPlayerChooser(intent)
+                Log.e(TAG, "Error preparing file for streaming", e)
+                Toast.makeText(context, "Error preparing video", Toast.LENGTH_SHORT).show()
             }
-        } else {
-            launchPlayerChooser(intent)
         }
     }
 
