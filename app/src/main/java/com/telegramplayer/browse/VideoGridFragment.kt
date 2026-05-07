@@ -69,6 +69,15 @@ class VideoGridFragment : VerticalGridSupportFragment() {
         loadVideos()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // When user comes back from external player, aggressively clean up cached video data
+        // This prevents a full movie (1-2GB) from lingering in TDLib's cache
+        Log.d(TAG, "onResume: triggering post-playback cache cleanup")
+        tdClient.forceCleanup()
+        proxyServer.clearAllCaches()
+    }
+
     private fun setupUI(titleString: String) {
         title = titleString
         
@@ -137,19 +146,19 @@ class VideoGridFragment : VerticalGridSupportFragment() {
     private fun playWithSelectedPlayer(mediaItem: MediaItem) {
         lifecycleScope.launch {
             try {
-                // Pre-resolve the fileId in case this is a newly received file
-                // (sent while the app was closed) where expected_size may be 0.
+                // Force resolve via remote ID to wake up TDLib for this file
                 val resolvedFileId = withContext(Dispatchers.IO) {
                     tdClient.prepareFileForStreaming(mediaItem.fileId, mediaItem.remoteFileId)
                 }
 
-                // Get confirmed file size for the proxy
-                val confirmedSize = if (resolvedFileId != mediaItem.fileId) {
-                    withContext(Dispatchers.IO) { tdClient.getFileSize(resolvedFileId) }
-                } else {
-                    // Use existing size if non-zero, else re-fetch
-                    if (mediaItem.size > 0L) mediaItem.size
-                    else withContext(Dispatchers.IO) { tdClient.getFileSize(resolvedFileId) }
+                // ALWAYS fetch the latest size from TDLib after resolution
+                var confirmedSize = withContext(Dispatchers.IO) { 
+                    tdClient.getFileSize(resolvedFileId) 
+                }
+                
+                // Fallback to the size from the message if TDLib returns 0
+                if (confirmedSize <= 0L && mediaItem.size > 0L) {
+                    confirmedSize = mediaItem.size
                 }
 
                 proxyServer.registerFile(resolvedFileId, mediaItem.fileName, confirmedSize, mediaItem.remoteFileId)

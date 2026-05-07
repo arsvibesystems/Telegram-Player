@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -19,9 +20,9 @@ import java.util.concurrent.atomic.AtomicLong
 class TdClientManager(private val context: Context) {
     companion object {
         private const val TAG = "TdClientManager"
-        private const val CHUNK_SIZE = 2L * 1024 * 1024 // 2MB chunks for responsive streaming
-        private const val MAX_CACHE_SIZE = 300L * 1024 * 1024 // 300MB max cache
-        private const val MAX_FILE_AGE_SECONDS = 7 * 24 * 60 * 60 // 7 days
+        private const val CHUNK_SIZE = 2L * 1024 * 1024 // 2MB chunks to reduce peak memory usage
+        private const val MAX_CACHE_SIZE = 200L * 1024 * 1024 // 200MB max cache for FireTV
+        private const val MAX_FILE_AGE_SECONDS = 1 * 24 * 60 * 60 // 1 day — aggressive for low-storage devices
     }
 
     private var clientId: Int = JsonClient.td_create_client_id()
@@ -30,9 +31,12 @@ class TdClientManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
 
-    // Rate-limit for optimizeStorage: at most once every 5 minutes
+    // Cache of fileId -> local file path to avoid repeated TDLib lookups
+    private val localPathCache = ConcurrentHashMap<Int, String>()
+
+    // Rate-limit for optimizeStorage: at most once every 1 minute for aggressive cache management
     private var lastOptimizeTime = 0L
-    private val OPTIMIZE_INTERVAL_MS = 5 * 60 * 1000L
+    private val OPTIMIZE_INTERVAL_MS = 60 * 1000L
 
     // Authentication state flow
     private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
@@ -174,6 +178,10 @@ class TdClientManager(private val context: Context) {
                 
                 // TDLib client is dead after Closed state. We must recreate it.
                 clientId = io.github.up9cloud.td.JsonClient.td_create_client_id()
+                // Clear pending requests as they belong to the old clientId
+                pendingRequests.forEach { (_, deferred) -> deferred.cancel() }
+                pendingRequests.clear()
+                localPathCache.clear()
                 triggerAuthorizationStateUpdate()
             }
         }
@@ -615,21 +623,69 @@ class TdClientManager(private val context: Context) {
         return null
     }
     
+    /**
+     * Read data from a local cache file using RandomAccessFile for efficient seeking.
+     * Returns null if the file doesn't exist or doesn't have enough data at the requested offset.
+     */
+    private fun tryReadLocalFile(localPath: String, offset: Long, chunkSize: Long): ByteArray? {
+        val file = File(localPath)
+        if (!file.exists() || file.length() <= offset) return null
+        
+        return try {
+            RandomAccessFile(file, "r").use { raf ->
+                raf.seek(offset)
+                val available = (file.length() - offset).coerceAtMost(chunkSize)
+                val buffer = ByteArray(available.toInt())
+                val bytesRead = raf.read(buffer)
+                if (bytesRead > 0) {
+                    Log.d(TAG, "Fast-path: read $bytesRead bytes from local cache at offset=$offset")
+                    if (bytesRead < buffer.size) buffer.copyOf(bytesRead) else buffer
+                } else null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error reading local file at offset=$offset", e)
+            null
+        }
+    }
+
+    /**
+     * Get (and cache) the local file path for a fileId.
+     * Only makes a TDLib call if not already cached.
+     */
+    suspend fun getLocalFilePath(fileId: Int): String {
+        localPathCache[fileId]?.let { cached ->
+            if (File(cached).exists()) return cached
+        }
+        
+        val request = JSONObject().apply {
+            put("@type", "getFile")
+            put("file_id", fileId)
+        }
+        return try {
+            val response = sendAsync(request)
+            val path = response.optJSONObject("local")?.optString("path", "") ?: ""
+            if (path.isNotEmpty()) localPathCache[fileId] = path
+            path
+        } catch (e: Exception) {
+            Log.w(TAG, "getLocalFilePath failed for $fileId", e)
+            ""
+        }
+    }
+    
     private suspend fun readFilePartInternal(fileId: Int, offset: Long, count: Long): ByteArray? {
         val chunkSize = count.coerceAtMost(CHUNK_SIZE)
 
-        // Step 1: Refresh file metadata so TDLib has active remote connection details
-        try {
-            val getFileReq = JSONObject().apply {
-                put("@type", "getFile")
-                put("file_id", fileId)
-            }
-            sendAsync(getFileReq)
-        } catch (e: Exception) {
-            Log.w(TAG, "File metadata refresh failed for $fileId", e)
+        // ── FAST PATH: try reading directly from cached local file (NO TDLib calls) ──
+        val cachedPath = localPathCache[fileId]
+        if (cachedPath != null && getFileIsCompleted(fileId)) {
+            val data = tryReadLocalFile(cachedPath, offset, chunkSize)
+            if (data != null) return data
         }
 
-        // Step 2: Request download of this chunk (synchronous = true blocks until data is ready)
+        // ── SLOW PATH: file not in local cache, need to download from Telegram ──
+        Log.d(TAG, "Cache miss for fileId=$fileId offset=$offset, downloading chunk...")
+
+        // Request download of this chunk (synchronous = true blocks until data is ready)
         val downloadRequest = JSONObject().apply {
             put("@type", "downloadFile")
             put("file_id", fileId)
@@ -650,39 +706,18 @@ class TdClientManager(private val context: Context) {
               "path=$localPath, completed=$isCompleted, " +
               "prefixSize=$downloadedPrefixSize, downloadedSize=$downloadedSize")
 
-        // Step 3: Try reading from the local cache file
-        // TDLib's cache file is the FULL file — data sits at its natural file offset
+        // Cache the path for future fast-path reads
         if (localPath.isNotEmpty()) {
-            val file = File(localPath)
-            if (file.exists() && file.length() > offset) {
-                try {
-                    return file.inputStream().use { input ->
-                        val skipped = input.skip(offset)
-                        if (skipped == offset) {
-                            val buffer = ByteArray(chunkSize.toInt())
-                            val bytesRead = input.read(buffer)
-                            if (bytesRead > 0) {
-                                Log.d(TAG, "Read $bytesRead bytes from local file at offset=$offset")
-                                buffer.copyOf(bytesRead)
-                            } else {
-                                Log.w(TAG, "Local file read returned 0 bytes at offset=$offset")
-                                null
-                            }
-                        } else {
-                            Log.w(TAG, "Skip failed: wanted $offset, got $skipped")
-                            null
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error reading local file at offset=$offset", e)
-                }
-            } else {
-                Log.w(TAG, "Local file missing or too small: exists=${file.exists()}, " +
-                      "fileLen=${if (file.exists()) file.length() else -1}, requestedOffset=$offset")
+            localPathCache[fileId] = localPath
+
+            // Try reading from the local cache file after download if fully completed
+            if (isCompleted) {
+                val data = tryReadLocalFile(localPath, offset, chunkSize)
+                if (data != null) return data
             }
         }
 
-        // Step 4: Fallback — use TDLib's readFilePart API (returns data as base64)
+        // Fallback — use TDLib's readFilePart API (returns data as base64)
         Log.d(TAG, "Falling back to readFilePart API for fileId=$fileId offset=$offset")
         val readRequest = JSONObject().apply {
             put("@type", "readFilePart")
@@ -701,7 +736,6 @@ class TdClientManager(private val context: Context) {
 
         Log.e(TAG, "Both local file and readFilePart failed for fileId=$fileId offset=$offset")
         return null
-
     }
 
     /**
@@ -728,6 +762,26 @@ class TdClientManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "getRemoteFile failed for $remoteFileId", e)
             null
+        }
+    }
+
+    /**
+     * Check if a file is fully downloaded.
+     */
+    suspend fun isFileCompleted(fileId: Int): Boolean {
+        return getFileIsCompleted(fileId)
+    }
+
+    private suspend fun getFileIsCompleted(fileId: Int): Boolean {
+        val request = JSONObject().apply {
+            put("@type", "getFile")
+            put("file_id", fileId)
+        }
+        return try {
+            val response = sendAsync(request)
+            response.optJSONObject("local")?.optBoolean("is_downloading_completed", false) ?: false
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -785,13 +839,20 @@ class TdClientManager(private val context: Context) {
      */
     suspend fun prepareFileForStreaming(fileId: Int, remoteFileId: String): Int {
         return try {
-            // First check if the current fileId yields a valid size
+            // Fast path: if the file already has a valid size, it's known to TDLib — skip resolution
             val existingSize = getFileSize(fileId)
-            if (existingSize > 0L) return fileId
+            if (existingSize > 0L) {
+                // Also warm the local path cache while we're at it
+                getLocalFilePath(fileId)
+                return fileId
+            }
 
-            // Size is 0 — re-register via remoteFileId to get TDLib to refresh its records
+            // Size is 0 — file not yet resolved. Force TDLib to sync via remote ID.
             Log.w(TAG, "fileId=$fileId has size=0, resolving via remoteFileId")
             val resolvedId = getFileByRemoteId(remoteFileId)
+            if (resolvedId != null) {
+                getLocalFilePath(resolvedId) // warm cache
+            }
             resolvedId ?: fileId
         } catch (e: Exception) {
             Log.e(TAG, "prepareFileForStreaming failed for fileId=$fileId", e)
@@ -827,9 +888,12 @@ class TdClientManager(private val context: Context) {
         val deferred = CompletableDeferred<JSONObject>()
         pendingRequests[id] = deferred
 
-        send(request.toString())
-
-        return withTimeout(120000) { deferred.await() } // 120 seconds for large file operations
+        try {
+            send(request.toString())
+            return withTimeout(120000) { deferred.await() } // 120 seconds for large file operations
+        } finally {
+            pendingRequests.remove(id)
+        }
     }
 
     private fun send(request: String) {
@@ -874,7 +938,7 @@ class TdClientManager(private val context: Context) {
                     put("size", MAX_CACHE_SIZE)
                     put("ttl", MAX_FILE_AGE_SECONDS)
                     put("count", -1) // No file count limit
-                    put("immunity_delay", 0) // Files must be at least 1 hour old
+                    put("immunity_delay", 30) // 30s immunity — just enough for active chunk, not whole movie
                     // File types to delete (videos, documents, audio, etc.)
                     // Exclude thumbnails (1), profile photos (2), stickers (5), wallpapers (8)
                     put("file_types", org.json.JSONArray().apply {
@@ -885,7 +949,7 @@ class TdClientManager(private val context: Context) {
                         put(JSONObject().put("@type", "fileTypeVoiceNote"))
                     })
                     put("chat_ids", org.json.JSONArray()) // All chats
-                    put("exclude_chat_ids", org.json.JSONArray()) // No exclusions
+                    put("exclude_chat_ids", org.json.JSONArray()) // No exclusions, allow mid-stream segmented deletion
                     put("return_deleted_file_statistics", false)
                     put("chat_limit", 0)
                 }
@@ -895,6 +959,46 @@ class TdClientManager(private val context: Context) {
                 Log.d(TAG, "Storage optimized: freed ${freedSize / 1024 / 1024}MB, $freedCount files")
             } catch (e: Exception) {
                 Log.e(TAG, "Error optimizing storage", e)
+            }
+        }
+    }
+
+    /**
+     * Aggressive cleanup after playback ends.
+     * Runs optimizeStorage with 0 immunity delay to reclaim all unused cache immediately.
+     * Also cancels any pending file downloads that may be lingering.
+     */
+    fun forceCleanup() {
+        scope.launch {
+            try {
+                Log.d(TAG, "Running FORCE cleanup after playback...")
+                // Run optimizeStorage with ZERO immunity — delete everything beyond cache limit now
+                val request = JSONObject().apply {
+                    put("@type", "optimizeStorage")
+                    put("size", MAX_CACHE_SIZE)
+                    put("ttl", 60) // Files older than 1 minute can be deleted
+                    put("count", -1)
+                    put("immunity_delay", 0) // No immunity — we're done playing
+                    put("file_types", org.json.JSONArray().apply {
+                        put(JSONObject().put("@type", "fileTypeVideo"))
+                        put(JSONObject().put("@type", "fileTypeDocument"))
+                        put(JSONObject().put("@type", "fileTypeAudio"))
+                        put(JSONObject().put("@type", "fileTypeVideoNote"))
+                        put(JSONObject().put("@type", "fileTypeVoiceNote"))
+                    })
+                    put("chat_ids", org.json.JSONArray())
+                    put("exclude_chat_ids", org.json.JSONArray())
+                    put("return_deleted_file_statistics", false)
+                    put("chat_limit", 0)
+                }
+                val response = sendAsync(request)
+                val freedSize = response.optLong("size", 0)
+                val freedCount = response.optInt("count", 0)
+                Log.d(TAG, "FORCE cleanup: freed ${freedSize / 1024 / 1024}MB, $freedCount files")
+                // Clear local path cache since files may have been deleted
+                localPathCache.clear()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in force cleanup", e)
             }
         }
     }
