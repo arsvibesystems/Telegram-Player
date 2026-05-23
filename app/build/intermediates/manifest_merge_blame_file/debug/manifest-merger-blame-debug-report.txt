@@ -1,0 +1,238 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.telegramplayer"
+4    android:versionCode="2"
+5    android:versionName="1.0.1" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="21"
+9        android:targetSdkVersion="34" />
+10
+11    <!-- Permissions -->
+12    <uses-permission android:name="android.permission.INTERNET" />
+12-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:6:5-67
+12-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:6:22-64
+13    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+13-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:7:5-79
+13-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:7:22-76
+14    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+14-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:8:5-77
+14-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:8:22-74
+15    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+15-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:9:5-87
+15-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:9:22-84
+16    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+16-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:11:5-80
+16-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:11:22-77
+17    <uses-permission
+17-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:12:5-108
+18        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+18-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:12:22-78
+19        android:maxSdkVersion="29" />
+19-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:12:79-105
+20    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+20-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:13:5-82
+20-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:13:22-79
+21
+22    <!-- Leanback (TV) Feature -->
+23    <uses-feature
+23-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:17:5-19:35
+24        android:name="android.software.leanback"
+24-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:18:9-49
+25        android:required="true" />
+25-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:19:9-32
+26
+27    <!-- Touch screen not required for Fire TV -->
+28    <uses-feature
+28-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:22:5-24:36
+29        android:name="android.hardware.touchscreen"
+29-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:23:9-52
+30        android:required="false" />
+30-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:24:9-33
+31
+32    <permission
+32-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
+33        android:name="com.telegramplayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+33-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:23:9-81
+34        android:protectionLevel="signature" />
+34-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:24:9-44
+35
+36    <uses-permission android:name="com.telegramplayer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+36-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:26:5-97
+36-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:26:22-94
+37
+38    <application
+38-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:26:5-84:19
+39        android:name="com.telegramplayer.TelegramPlayerApp"
+39-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:27:9-42
+40        android:allowBackup="true"
+40-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:28:9-35
+41        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+41-->[androidx.core:core:1.12.0] C:\Users\SHINE\.gradle\caches\transforms-3\2ccd268e0ca2e1cd10ec650ac8067a3e\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
+42        android:banner="@drawable/banner"
+42-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:29:9-42
+43        android:debuggable="true"
+44        android:extractNativeLibs="true"
+45        android:icon="@mipmap/ic_launcher"
+45-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:30:9-43
+46        android:label="@string/app_name"
+46-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:31:9-41
+47        android:supportsRtl="true"
+47-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:32:9-35
+48        android:theme="@style/Theme.TelegramPlayer"
+48-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:33:9-52
+49        android:usesCleartextTraffic="true" >
+49-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:34:9-44
+50
+51        <!-- Auth Activity (Launcher for first-time setup) -->
+52        <activity
+52-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:38:9-47:20
+53            android:name="com.telegramplayer.auth.AuthActivity"
+53-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:39:13-46
+54            android:exported="true"
+54-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:40:13-36
+55            android:screenOrientation="landscape"
+55-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:42:13-50
+56            android:theme="@style/Theme.TelegramPlayer.Auth" >
+56-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:41:13-61
+57            <intent-filter>
+57-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:43:13-46:29
+58                <action android:name="android.intent.action.MAIN" />
+58-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:44:17-69
+58-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:44:25-66
+59
+60                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+60-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:45:17-86
+60-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:45:27-83
+61            </intent-filter>
+62        </activity>
+63
+64        <!-- Main Browse Activity -->
+65        <activity
+65-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:50:9-53:53
+66            android:name="com.telegramplayer.browse.MainActivity"
+66-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:51:13-48
+67            android:exported="false"
+67-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:52:13-37
+68            android:screenOrientation="landscape" />
+68-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:53:13-50
+69
+70        <!-- Media Details Activity -->
+71        <activity
+71-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:56:9-59:53
+72            android:name="com.telegramplayer.browse.MediaDetailsActivity"
+72-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:57:13-56
+73            android:exported="false"
+73-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:58:13-37
+74            android:screenOrientation="landscape" />
+74-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:59:13-50
+75
+76        <!-- Streaming Proxy Service -->
+77        <service
+77-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:62:9-65:56
+78            android:name="com.telegramplayer.streaming.StreamingProxyService"
+78-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:63:13-60
+79            android:exported="false"
+79-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:64:13-37
+80            android:foregroundServiceType="dataSync" />
+80-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:65:13-53
+81
+82        <activity
+82-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:67:9-70:59
+83            android:name="com.telegramplayer.browse.VideoGridActivity"
+83-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:68:13-53
+84            android:exported="false"
+84-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:69:13-37
+85            android:theme="@style/Theme.TelegramPlayer" />
+85-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:70:13-56
+86
+87        <!-- Latest Files Activity -->
+88        <activity
+88-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:73:9-76:59
+89            android:name="com.telegramplayer.browse.LatestFilesActivity"
+89-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:74:13-55
+90            android:exported="false"
+90-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:75:13-37
+91            android:theme="@style/Theme.TelegramPlayer" />
+91-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:76:13-56
+92
+93        <!-- Settings Activity -->
+94        <activity
+94-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:79:9-83:70
+95            android:name="com.telegramplayer.browse.SettingsActivity"
+95-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:80:13-52
+96            android:exported="false"
+96-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:81:13-37
+97            android:screenOrientation="landscape"
+97-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:82:13-50
+98            android:theme="@style/Theme.TelegramPlayer.GuidedStep" />
+98-->C:\Users\SHINE\Desktop\My Projects\Telegram Player\app\src\main\AndroidManifest.xml:83:13-67
+99
+100        <provider
+100-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:24:9-32:20
+101            android:name="androidx.startup.InitializationProvider"
+101-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:25:13-67
+102            android:authorities="com.telegramplayer.androidx-startup"
+102-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:26:13-68
+103            android:exported="false" >
+103-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:27:13-37
+104            <meta-data
+104-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:29:13-31:52
+105                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+105-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:30:17-75
+106                android:value="androidx.startup" />
+106-->[androidx.emoji2:emoji2:1.2.0] C:\Users\SHINE\.gradle\caches\transforms-3\5bd09d469f39497674f99ddfe48d0ff2\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:31:17-49
+107            <meta-data
+107-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\SHINE\.gradle\caches\transforms-3\a87653f823cc6292df5b23ce4123ef1b\transformed\jetified-lifecycle-process-2.6.2\AndroidManifest.xml:29:13-31:52
+108                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+108-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\SHINE\.gradle\caches\transforms-3\a87653f823cc6292df5b23ce4123ef1b\transformed\jetified-lifecycle-process-2.6.2\AndroidManifest.xml:30:17-78
+109                android:value="androidx.startup" />
+109-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\SHINE\.gradle\caches\transforms-3\a87653f823cc6292df5b23ce4123ef1b\transformed\jetified-lifecycle-process-2.6.2\AndroidManifest.xml:31:17-49
+110            <meta-data
+110-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:29:13-31:52
+111                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+111-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:30:17-85
+112                android:value="androidx.startup" />
+112-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:31:17-49
+113        </provider>
+114
+115        <receiver
+115-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:34:9-52:20
+116            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+116-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:35:13-76
+117            android:directBootAware="false"
+117-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:36:13-44
+118            android:enabled="true"
+118-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:37:13-35
+119            android:exported="true"
+119-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:38:13-36
+120            android:permission="android.permission.DUMP" >
+120-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:39:13-57
+121            <intent-filter>
+121-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:40:13-42:29
+122                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+122-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:41:17-91
+122-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:41:25-88
+123            </intent-filter>
+124            <intent-filter>
+124-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:43:13-45:29
+125                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+125-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:44:17-85
+125-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:44:25-82
+126            </intent-filter>
+127            <intent-filter>
+127-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:46:13-48:29
+128                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+128-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:47:17-88
+128-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:47:25-85
+129            </intent-filter>
+130            <intent-filter>
+130-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:49:13-51:29
+131                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+131-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:50:17-95
+131-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\SHINE\.gradle\caches\transforms-3\820e62f0b30c90bc6c88badac0db92dc\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:50:25-92
+132            </intent-filter>
+133        </receiver>
+134    </application>
+135
+136</manifest>

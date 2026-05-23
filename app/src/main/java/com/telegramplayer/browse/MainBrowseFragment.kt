@@ -22,6 +22,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+// Sidebar action IDs
+private const val ACTION_REFRESH = "action_refresh"
+private const val ACTION_LATEST = "action_latest"
+
 /**
  * Main Leanback browse fragment displaying Chat Folders.
  * Rows: Private Chats, Groups, Channels.
@@ -75,16 +79,26 @@ class MainBrowseFragment : BrowseSupportFragment() {
     }
 
     private fun setupEventListeners() {
-        // Launch Video Grid on Click
+        // Launch Video Grid / handle sidebar actions on Click
         onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
-            if (item is ChatInfo) {
-                val intent = Intent(context, VideoGridActivity::class.java).apply {
-                    putExtra(VideoGridActivity.EXTRA_CHAT_ID, item.id)
-                    putExtra(VideoGridActivity.EXTRA_CHAT_TITLE, item.title)
+            when {
+                item is SidebarAction && item.id == ACTION_REFRESH -> {
+                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
+                    loadChats()
                 }
-                startActivity(intent)
-            } else if (item is String && item == "Player Settings") {
-                startActivity(SettingsActivity.newIntent(requireContext()))
+                item is SidebarAction && item.id == ACTION_LATEST -> {
+                    startActivity(Intent(context, LatestFilesActivity::class.java))
+                }
+                item is ChatInfo -> {
+                    val intent = Intent(context, VideoGridActivity::class.java).apply {
+                        putExtra(VideoGridActivity.EXTRA_CHAT_ID, item.id)
+                        putExtra(VideoGridActivity.EXTRA_CHAT_TITLE, item.title)
+                    }
+                    startActivity(intent)
+                }
+                item is String && item == "Player Settings" -> {
+                    startActivity(SettingsActivity.newIntent(requireContext()))
+                }
             }
         }
 
@@ -121,9 +135,13 @@ class MainBrowseFragment : BrowseSupportFragment() {
     private fun loadChats() {
         lifecycleScope.launch {
             try {
-                // Loading Indicator
+                // Loading Indicator — keep sidebar action rows at top
                 rowsAdapter.clear()
-                val loadingHeader = HeaderItem(0, "Loading chats...")
+
+                // ── Sidebar Action Rows (always first) ──────────────────────────
+                addSidebarActionRow()
+
+                val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
                 val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
                 rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
 
@@ -131,24 +149,27 @@ class MainBrowseFragment : BrowseSupportFragment() {
                     tdClient.getChats(150)
                 }
 
-                rowsAdapter.clear()
+                // Remove only the chat/settings rows (keep the 2 sidebar rows at indices 0 & 1)
+                while (rowsAdapter.size() > 2) {
+                    rowsAdapter.removeItems(2, 1)
+                }
 
                 // Group chats by type
                 val privateChats = chats.filter { it.type == ChatType.PRIVATE }
                 val groups = chats.filter { it.type == ChatType.GROUP }
                 val channels = chats.filter { it.type == ChatType.CHANNEL }
 
-                // Row 1: Private Chats
+                // Row: Private Chats
                 if (privateChats.isNotEmpty()) {
                     addChatRow("💬 Private Chats", privateChats)
                 }
 
-                // Row 2: Groups
+                // Row: Groups
                 if (groups.isNotEmpty()) {
                     addChatRow("👥 Groups", groups)
                 }
 
-                // Row 3: Channels
+                // Row: Channels
                 if (channels.isNotEmpty()) {
                     addChatRow("📺 Channels", channels)
                 }
@@ -161,6 +182,36 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 Toast.makeText(context, "Error loading chats", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * Adds the Refresh and Latest Files action rows as the first two items
+     * in the side shelf. These stay pinned at the top across refreshes.
+     */
+    private fun addSidebarActionRow() {
+        val presenter = SidebarActionPresenter()
+
+        // Row 0 — Refresh
+        val refreshAdapter = ArrayObjectAdapter(presenter)
+        refreshAdapter.add(
+            SidebarAction(
+                id = ACTION_REFRESH,
+                label = "Refresh",
+                iconRes = R.drawable.ic_refresh
+            )
+        )
+        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), refreshAdapter))
+
+        // Row 1 — Latest Files
+        val latestAdapter = ArrayObjectAdapter(presenter)
+        latestAdapter.add(
+            SidebarAction(
+                id = ACTION_LATEST,
+                label = "Latest Files",
+                iconRes = R.drawable.ic_latest
+            )
+        )
+        rowsAdapter.add(ListRow(HeaderItem(1, "🕐 Latest Files"), latestAdapter))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
