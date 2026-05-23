@@ -122,17 +122,40 @@ class VideoGridFragment : VerticalGridSupportFragment() {
     private fun loadVideos() {
         lifecycleScope.launch {
             try {
-                val mediaItems = withContext(Dispatchers.IO) {
-                    tdClient.searchChatMedia(chatId, 100)
+                // Pass 1: Instant load from local DB (no sync)
+                val localItems = withContext(Dispatchers.IO) {
+                    tdClient.searchChatMedia(chatId, 100, sync = false)
                 }
                 
-                // Sort by messageId descending (Newest First)
-                val sortedItems = mediaItems.sortedByDescending { it.messageId }
-
+                val sortedLocalItems = localItems.sortedByDescending { it.messageId }
                 gridAdapter.clear()
-                sortedItems.forEach { gridAdapter.add(it) }
+                sortedLocalItems.forEach { gridAdapter.add(it) }
                 
-                if (sortedItems.isEmpty()) {
+                if (sortedLocalItems.isEmpty()) {
+                    Toast.makeText(context, "Checking for new videos...", Toast.LENGTH_SHORT).show()
+                }
+
+                // Pass 2: Sync from server
+                val syncedItems = withContext(Dispatchers.IO) {
+                    tdClient.searchChatMedia(chatId, 100, sync = true)
+                }
+                
+                val sortedSyncedItems = syncedItems.sortedByDescending { it.messageId }
+
+                // Only update UI if there are new items to avoid flicker
+                val needsUpdate = sortedSyncedItems.size != sortedLocalItems.size || 
+                    sortedSyncedItems.firstOrNull()?.messageId != sortedLocalItems.firstOrNull()?.messageId
+
+                if (needsUpdate) {
+                    gridAdapter.clear()
+                    sortedSyncedItems.forEach { gridAdapter.add(it) }
+                    
+                    if (sortedLocalItems.isNotEmpty()) {
+                        Toast.makeText(context, "Grid updated with new videos", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                if (sortedSyncedItems.isEmpty() && sortedLocalItems.isEmpty()) {
                     Toast.makeText(context, "No videos found", Toast.LENGTH_SHORT).show()
                 }
 

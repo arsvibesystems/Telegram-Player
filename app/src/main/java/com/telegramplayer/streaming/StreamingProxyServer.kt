@@ -227,7 +227,6 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         rangeHeader: String,
         mimeType: String
     ): Response {
-        // Parse range: "bytes=start-end" or "bytes=start-"
         val rangeValue = rangeHeader.removePrefix("bytes=")
         val parts = rangeValue.split("-")
 
@@ -235,11 +234,9 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         val endByte = if (parts.size > 1 && parts[1].isNotEmpty()) {
             parts[1].toLongOrNull() ?: (fileSize - 1)
         } else {
-            // If no end specified, return a chunk
-            (startByte + CHUNK_SIZE - 1).coerceAtMost(fileSize - 1)
+            fileSize - 1
         }
 
-        // Validate range
         if (startByte >= fileSize || endByte >= fileSize || startByte > endByte) {
             val response = newFixedLengthResponse(
                 Response.Status.RANGE_NOT_SATISFIABLE,
@@ -253,153 +250,101 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         val contentLength = endByte - startByte + 1
         Log.d(TAG, "Serving range: $startByte-$endByte/$fileSize (${contentLength} bytes)")
 
-        // ── FAST PATH: try reading directly from local disk (no TDLib calls) ──
-        val localPath = localPathCache[fileId]
-        val isCompleted = isCompletedCache[fileId] == true
-        if (localPath != null && isCompleted) {
-            val localData = tryReadLocalFile(localPath, startByte, contentLength.coerceAtMost(CHUNK_SIZE))
-            if (localData != null) {
-                val actualEnd = startByte + localData.size - 1
-                val response = newFixedLengthResponse(
-                    Response.Status.PARTIAL_CONTENT,
-                    mimeType,
-                    ByteArrayInputStream(localData),
-                    localData.size.toLong()
-                )
-                response.addHeader("Accept-Ranges", "bytes")
-                response.addHeader("Content-Range", "bytes $startByte-$actualEnd/$fileSize")
-                response.addHeader("Content-Length", localData.size.toString())
-                return response
-            }
-        }
-
-        // ── SLOW PATH: fetch via TDLib ──
-        var data = runBlocking {
-            TelegramPlayerApp.getTdClient().readFilePart(
-                fileId,
-                startByte,
-                contentLength.coerceAtMost(CHUNK_SIZE)
-            )
-        }
-
-        // Update local path cache after TDLib download
-        if (data != null) {
-            runBlocking {
-                val path = TelegramPlayerApp.getTdClient().getLocalFilePath(fileId)
-                if (path.isNotEmpty()) localPathCache[fileId] = path
-            }
-        }
-
-        // Fallback: newly added files may have an unregistered local fileId.
-        if ((data == null || data.isEmpty()) && remoteFileIdCache.containsKey(fileId)) {
-            val remoteId = remoteFileIdCache[fileId]!!
-            Log.w(TAG, "readFilePart returned null for fileId=$fileId, trying getRemoteFile($remoteId)")
-            val resolvedId = runBlocking {
-                TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId)
-            }
-            if (resolvedId != null && resolvedId != fileId) {
-                Log.d(TAG, "Resolved new fileId=$resolvedId, retrying readFilePart")
-                data = runBlocking {
-                    TelegramPlayerApp.getTdClient().readFilePart(
-                        resolvedId,
-                        startByte,
-                        contentLength.coerceAtMost(CHUNK_SIZE)
-                    )
-                }
-            }
-        }
-
-        if (data == null || data.isEmpty()) {
-            return newFixedLengthResponse(
-                Response.Status.INTERNAL_ERROR,
-                "text/plain",
-                "Failed to read file data"
-            )
-        }
-
-        val actualEnd = startByte + data.size - 1
+        val inputStream = TdLibInputStream(fileId, startByte, endByte)
+        
         val response = newFixedLengthResponse(
             Response.Status.PARTIAL_CONTENT,
             mimeType,
-            ByteArrayInputStream(data),
-            data.size.toLong()
+            inputStream,
+            contentLength
         )
 
         response.addHeader("Accept-Ranges", "bytes")
-        response.addHeader("Content-Range", "bytes $startByte-$actualEnd/$fileSize")
-        response.addHeader("Content-Length", data.size.toString())
+        response.addHeader("Content-Range", "bytes $startByte-$endByte/$fileSize")
 
         return response
     }
 
     private fun handleFullRequest(fileId: Int, fileSize: Long, mimeType: String): Response {
-        Log.d(TAG, "Serving full file (first chunk): fileId=$fileId, size=$fileSize")
+        Log.d(TAG, "Serving full file: fileId=$fileId, size=$fileSize")
 
-        // ── FAST PATH: try local disk first ──
-        val localPath = localPathCache[fileId]
-        val isCompleted = isCompletedCache[fileId] == true
-        if (localPath != null && isCompleted) {
-            val localData = tryReadLocalFile(localPath, 0, CHUNK_SIZE)
-            if (localData != null) {
-                val response = newFixedLengthResponse(
-                    Response.Status.OK,
-                    mimeType,
-                    ByteArrayInputStream(localData),
-                    localData.size.toLong()
-                )
-                response.addHeader("Accept-Ranges", "bytes")
-                response.addHeader("Content-Length", localData.size.toString())
-                return response
-            }
-        }
-
-        // ── SLOW PATH: via TDLib ──
-        var data = runBlocking {
-            TelegramPlayerApp.getTdClient().readFilePart(fileId, 0, CHUNK_SIZE)
-        }
-
-        // Update local path cache
-        if (data != null) {
-            runBlocking {
-                val path = TelegramPlayerApp.getTdClient().getLocalFilePath(fileId)
-                if (path.isNotEmpty()) localPathCache[fileId] = path
-            }
-        }
-
-        if ((data == null || data.isEmpty()) && remoteFileIdCache.containsKey(fileId)) {
-            val remoteId = remoteFileIdCache[fileId]!!
-            Log.w(TAG, "Full request readFilePart null for fileId=$fileId, trying getRemoteFile($remoteId)")
-            val resolvedId = runBlocking {
-                TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId)
-            }
-            if (resolvedId != null && resolvedId != fileId) {
-                data = runBlocking {
-                    TelegramPlayerApp.getTdClient().readFilePart(resolvedId, 0, CHUNK_SIZE)
-                }
-            }
-        }
-
-        if (data == null || data.isEmpty()) {
-            return newFixedLengthResponse(
-                Response.Status.INTERNAL_ERROR,
-                "text/plain",
-                "Failed to read file data"
-            )
-        }
-
-        // Return 200 with Accept-Ranges header so player knows to use range requests
-        // Content-Length must match actual data sent, NOT the full file size
+        val inputStream = TdLibInputStream(fileId, 0, fileSize - 1)
+        
         val response = newFixedLengthResponse(
             Response.Status.OK,
             mimeType,
-            ByteArrayInputStream(data),
-            data.size.toLong()
+            inputStream,
+            fileSize
         )
 
         response.addHeader("Accept-Ranges", "bytes")
-        response.addHeader("Content-Length", data.size.toString())
 
         return response
+    }
+
+    private inner class TdLibInputStream(
+        private val fileId: Int,
+        private val startOffset: Long,
+        private val endOffset: Long
+    ) : InputStream() {
+        private var currentOffset = startOffset
+        private var buffer: ByteArray? = null
+        private var bufferPos = 0
+
+        override fun read(): Int {
+            val b = ByteArray(1)
+            return if (read(b, 0, 1) == 1) b[0].toInt() and 0xFF else -1
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (currentOffset > endOffset) return -1
+            
+            if (buffer == null || bufferPos >= buffer!!.size) {
+                // First chunk is smaller (256KB) to start playback instantly, subsequent chunks are 2MB
+                val isFirstChunk = (currentOffset == startOffset)
+                val chunkSize = if (isFirstChunk) 256L * 1024 else CHUNK_SIZE
+                
+                val remaining = endOffset - currentOffset + 1
+                val toRead = chunkSize.coerceAtMost(remaining)
+                if (toRead <= 0) return -1
+
+                buffer = runBlocking {
+                    var localData: ByteArray? = null
+                    val localPath = localPathCache[fileId]
+                    val isCompleted = isCompletedCache[fileId] == true
+                    if (localPath != null && isCompleted) {
+                        localData = tryReadLocalFile(localPath, currentOffset, toRead)
+                    }
+
+                    if (localData != null) {
+                        localData
+                    } else {
+                        var data = TelegramPlayerApp.getTdClient().readFilePart(fileId, currentOffset, toRead)
+                        
+                        if (data != null) {
+                            val path = TelegramPlayerApp.getTdClient().getLocalFilePath(fileId)
+                            if (path.isNotEmpty()) localPathCache[fileId] = path
+                        } else if (remoteFileIdCache.containsKey(fileId)) {
+                            val remoteId = remoteFileIdCache[fileId]!!
+                            val resolvedId = TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId)
+                            if (resolvedId != null && resolvedId != fileId) {
+                                data = TelegramPlayerApp.getTdClient().readFilePart(resolvedId, currentOffset, toRead)
+                            }
+                        }
+                        data
+                    }
+                }
+                bufferPos = 0
+                if (buffer == null || buffer!!.isEmpty()) return -1
+            }
+            
+            val available = buffer!!.size - bufferPos
+            val toCopy = minOf(len, available)
+            System.arraycopy(buffer!!, bufferPos, b, off, toCopy)
+            bufferPos += toCopy
+            currentOffset += toCopy
+            return toCopy
+        }
     }
 
     /**

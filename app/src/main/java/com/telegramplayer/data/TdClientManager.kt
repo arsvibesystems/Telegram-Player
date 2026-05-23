@@ -339,35 +339,37 @@ class TdClientManager(private val context: Context) {
      * Search for media messages in a chat.
      * Searches for both Videos and Documents (filtered for video types) to support MKV, AVI, etc.
      */
-    suspend fun searchChatMedia(chatId: Long, limit: Int = 100): List<MediaItem> {
+    suspend fun searchChatMedia(chatId: Long, limit: Int = 100, sync: Boolean = true): List<MediaItem> {
         return try {
-            // Step 1: Open chat so TDLib actively subscribes to new messages for this chat.
-            // This is required for searchChatMessages to find recently added files.
-            try {
-                val openChatReq = JSONObject().apply {
-                    put("@type", "openChat")
-                    put("chat_id", chatId)
+            if (sync) {
+                // Step 1: Open chat so TDLib actively subscribes to new messages for this chat.
+                // This is required for searchChatMessages to find recently added files.
+                try {
+                    val openChatReq = JSONObject().apply {
+                        put("@type", "openChat")
+                        put("chat_id", chatId)
+                    }
+                    sendAsync(openChatReq)
+                    Log.d(TAG, "openChat sent for $chatId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "openChat failed for $chatId, continuing anyway", e)
                 }
-                sendAsync(openChatReq)
-                Log.d(TAG, "openChat sent for $chatId")
-            } catch (e: Exception) {
-                Log.w(TAG, "openChat failed for $chatId, continuing anyway", e)
-            }
 
-            // Step 2: Pull last 100 messages from Telegram servers into local DB.
-            // Without this, searchChatMessages only sees stale local data.
-            try {
-                val historyReq = JSONObject().apply {
-                    put("@type", "getChatHistory")
-                    put("chat_id", chatId)
-                    put("from_message_id", 0)
-                    put("offset", 0)
-                    put("limit", 100)
+                // Step 2: Pull last 100 messages from Telegram servers into local DB.
+                // Without this, searchChatMessages only sees stale local data.
+                try {
+                    val historyReq = JSONObject().apply {
+                        put("@type", "getChatHistory")
+                        put("chat_id", chatId)
+                        put("from_message_id", 0)
+                        put("offset", 0)
+                        put("limit", 100)
+                    }
+                    sendAsync(historyReq)
+                    Log.d(TAG, "Chat history synced (100 msgs) for $chatId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Chat history sync failed for $chatId, proceeding with local search", e)
                 }
-                sendAsync(historyReq)
-                Log.d(TAG, "Chat history synced (100 msgs) for $chatId")
-            } catch (e: Exception) {
-                Log.w(TAG, "Chat history sync failed for $chatId, proceeding with local search", e)
             }
 
             val videoDeferred = scope.async(Dispatchers.IO) {
