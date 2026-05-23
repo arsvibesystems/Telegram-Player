@@ -432,6 +432,57 @@ class TdClientManager(private val context: Context) {
         return response.optJSONArray("messages") ?: org.json.JSONArray()
     }
 
+    suspend fun getLatestMedia(limit: Int = 30): List<MediaItem> {
+        return try {
+            val videoDeferred = scope.async(Dispatchers.IO) {
+                searchGlobalMessagesByType(limit, "searchMessagesFilterVideo")
+            }
+            val documentDeferred = scope.async(Dispatchers.IO) {
+                searchGlobalMessagesByType(limit, "searchMessagesFilterDocument")
+            }
+
+            val videoMessages = videoDeferred.await()
+            val documentMessages = documentDeferred.await()
+
+            val mediaItems = mutableListOf<MediaItem>()
+
+            for (i in 0 until videoMessages.length()) {
+                val message = videoMessages.getJSONObject(i)
+                val chatId = message.optLong("chat_id", 0L)
+                parseVideoMessage(message, chatId)?.let { mediaItems.add(it) }
+            }
+
+            for (i in 0 until documentMessages.length()) {
+                val message = documentMessages.getJSONObject(i)
+                val chatId = message.optLong("chat_id", 0L)
+                parseDocumentMessage(message, chatId)?.let { mediaItems.add(it) }
+            }
+
+            mediaItems.distinctBy { it.fileId }
+                .sortedByDescending { it.messageId }
+                .take(limit)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching global media", e)
+            emptyList()
+        }
+    }
+
+    private suspend fun searchGlobalMessagesByType(limit: Int, filterType: String): org.json.JSONArray {
+        val request = JSONObject().apply {
+            put("@type", "searchMessages")
+            put("chat_list", JSONObject().put("@type", "chatListMain"))
+            put("query", "")
+            put("offset_date", 0)
+            put("offset_chat_id", 0)
+            put("offset_message_id", 0)
+            put("limit", limit)
+            put("filter", JSONObject().put("@type", filterType))
+        }
+        val response = sendAsync(request)
+        return response.optJSONArray("messages") ?: org.json.JSONArray()
+    }
+
     private suspend fun parseVideoMessage(message: JSONObject, chatId: Long): MediaItem? {
         val content = message.getJSONObject("content")
         if (content.getString("@type") != "messageVideo") return null

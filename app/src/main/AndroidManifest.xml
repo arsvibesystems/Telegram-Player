@@ -69,12 +69,6 @@
             android:exported="false"
             android:theme="@style/Theme.TelegramPlayer" />
 
-        <!-- Latest Files Activity -->
-        <activity
-            android:name=".browse.LatestFilesActivity"
-            android:exported="false"
-            android:theme="@style/Theme.TelegramPlayer" />
-
         <!-- Settings Activity -->
         <activity
             android:name=".browse.SettingsActivity"

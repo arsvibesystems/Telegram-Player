@@ -19,8 +19,19 @@ import com.telegramplayer.TelegramPlayerApp
 import com.telegramplayer.data.ChatInfo
 import com.telegramplayer.data.ChatType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
+import com.telegramplayer.data.MediaItem
+import com.telegramplayer.data.MediaType
+import com.telegramplayer.streaming.StreamingProxyServer
 
 // Sidebar action IDs
 private const val ACTION_REFRESH = "action_refresh"
@@ -45,6 +56,25 @@ class MainBrowseFragment : BrowseSupportFragment() {
         shadowEnabled = false
         selectEffectEnabled = true
     })
+
+    private val proxyServer = StreamingProxyServer.getInstance()
+    private var pendingDownloadItem: MediaItem? = null
+
+    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            pendingDownloadItem?.let { downloadSubtitle(it) }
+        } else {
+            Toast.makeText(context, "Storage permission required to download", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val manageStorageLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+            pendingDownloadItem?.let { downloadSubtitle(it) }
+        } else {
+            Toast.makeText(context, "All files access required to download", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,8 +116,12 @@ class MainBrowseFragment : BrowseSupportFragment() {
                     Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
                     loadChats()
                 }
-                item is SidebarAction && item.id == ACTION_LATEST -> {
-                    startActivity(Intent(context, LatestFilesActivity::class.java))
+                item is MediaItem -> {
+                    if (item.mediaType == MediaType.DOCUMENT) {
+                        Toast.makeText(context, "Long press 'Select' to download this file", Toast.LENGTH_SHORT).show()
+                    } else {
+                        playWithSelectedPlayer(item)
+                    }
                 }
                 item is ChatInfo -> {
                     val intent = Intent(context, VideoGridActivity::class.java).apply {
@@ -145,13 +179,20 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
                 rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
 
-                val chats = withContext(Dispatchers.IO) {
-                    tdClient.getChats(150)
+                val latestMediaDeferred = async(Dispatchers.IO) { tdClient.getLatestMedia(60) }
+                val chatsDeferred = async(Dispatchers.IO) { tdClient.getChats(150) }
+                
+                val latestMedia = latestMediaDeferred.await()
+                val chats = chatsDeferred.await()
+
+                // Remove only the loading/chat/settings rows (keep the 1 sidebar row at index 0)
+                while (rowsAdapter.size() > 1) {
+                    rowsAdapter.removeItems(1, 1)
                 }
 
-                // Remove only the chat/settings rows (keep the 2 sidebar rows at indices 0 & 1)
-                while (rowsAdapter.size() > 2) {
-                    rowsAdapter.removeItems(2, 1)
+                // Row: Latest Files
+                if (latestMedia.isNotEmpty()) {
+                    addLatestFilesRow(latestMedia)
                 }
 
                 // Group chats by type
@@ -185,8 +226,8 @@ class MainBrowseFragment : BrowseSupportFragment() {
     }
 
     /**
-     * Adds the Refresh and Latest Files action rows as the first two items
-     * in the side shelf. These stay pinned at the top across refreshes.
+     * Adds the Refresh action row as the first item
+     * in the side shelf. This stays pinned at the top across refreshes.
      */
     private fun addSidebarActionRow() {
         val presenter = SidebarActionPresenter()
@@ -201,17 +242,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
             )
         )
         rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), refreshAdapter))
-
-        // Row 1 — Latest Files
-        val latestAdapter = ArrayObjectAdapter(presenter)
-        latestAdapter.add(
-            SidebarAction(
-                id = ACTION_LATEST,
-                label = "Latest Files",
-                iconRes = R.drawable.ic_latest
-            )
-        )
-        rowsAdapter.add(ListRow(HeaderItem(1, "🕐 Latest Files"), latestAdapter))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
@@ -232,5 +262,107 @@ class MainBrowseFragment : BrowseSupportFragment() {
         
         val headerItem = HeaderItem(rowsAdapter.size().toLong(), "Settings")
         rowsAdapter.add(ListRow(headerItem, listRowAdapter))
+    }
+
+    private fun addLatestFilesRow(items: List<MediaItem>) {
+        val displayMetrics = resources.displayMetrics
+        val width = displayMetrics.widthPixels
+        val minColumnWidth = 380
+        val columns = (width / minColumnWidth).coerceAtLeast(4)
+        val usableWidth = width - (80 * displayMetrics.density)
+        val cardWidth = ((usableWidth / columns) / 1.15).toInt()
+        val cardHeight = (cardWidth * 3 / 2)
+
+        val cardPresenter = MediaCardPresenter(cardWidth, cardHeight) { mediaItem ->
+            handleLongClick(mediaItem)
+        }
+        val listRowAdapter = ArrayObjectAdapter(cardPresenter)
+        
+        items.forEach { listRowAdapter.add(it) }
+
+        val headerItem = HeaderItem(rowsAdapter.size().toLong(), "🕐 Latest Files")
+        rowsAdapter.add(ListRow(headerItem, listRowAdapter))
+    }
+
+    private fun playWithSelectedPlayer(mediaItem: MediaItem) {
+        lifecycleScope.launch {
+            try {
+                val resolvedFileId = withContext(Dispatchers.IO) {
+                    tdClient.prepareFileForStreaming(mediaItem.fileId, mediaItem.remoteFileId)
+                }
+                var confirmedSize = withContext(Dispatchers.IO) { tdClient.getFileSize(resolvedFileId) }
+                if (confirmedSize <= 0L && mediaItem.size > 0L) {
+                    confirmedSize = mediaItem.size
+                }
+                proxyServer.registerFile(resolvedFileId, mediaItem.fileName, confirmedSize, mediaItem.remoteFileId)
+                val streamUrl = proxyServer.getStreamUrl(resolvedFileId)
+                Toast.makeText(context, "Playing: ${mediaItem.title}", Toast.LENGTH_SHORT).show()
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(Uri.parse(streamUrl), mediaItem.mimeType)
+                    putExtra("title", mediaItem.title)
+                    putExtra("secure_uri", true)
+                }
+                val playerManager = com.telegramplayer.data.PlayerManager(requireContext())
+                val selectedPackage = playerManager.getSelectedPlayer()
+                if (selectedPackage != null) {
+                    intent.setPackage(selectedPackage)
+                    try {
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Selected player not found", Toast.LENGTH_SHORT).show()
+                        launchPlayerChooser(intent)
+                    }
+                } else {
+                    launchPlayerChooser(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error preparing file for streaming", e)
+                Toast.makeText(context, "Error preparing video", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun launchPlayerChooser(intent: Intent) {
+        try {
+            startActivity(Intent.createChooser(intent, "Select Video Player"))
+        } catch (e: Exception) {
+            Toast.makeText(context, "No video player found", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun handleLongClick(mediaItem: MediaItem) {
+        if (mediaItem.mediaType != MediaType.DOCUMENT) return
+        pendingDownloadItem = mediaItem
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                downloadSubtitle(mediaItem)
+            } else {
+                Toast.makeText(context, "Please allow 'All files access' to save to Downloads", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${requireContext().packageName}")
+                }
+                manageStorageLauncher.launch(intent)
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+                downloadSubtitle(mediaItem)
+            } else {
+                requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+    }
+
+    private fun downloadSubtitle(item: MediaItem) {
+        Toast.makeText(context, "Downloading ${item.title}...", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                tdClient.exportFileToDownloads(item.fileId, item.fileName) { _ -> }
+            }
+            if (success) {
+                Toast.makeText(context, "Saved to Download folder", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Failed to download", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }
