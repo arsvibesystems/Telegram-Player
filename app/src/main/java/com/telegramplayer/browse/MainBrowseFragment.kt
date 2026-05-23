@@ -88,9 +88,20 @@ class MainBrowseFragment : BrowseSupportFragment() {
         super.onViewCreated(view, savedInstanceState)
         view.background = ColorDrawable(Color.TRANSPARENT)
         
-        // Change Search Orb icon to a Refresh icon instead of a magnifying glass
-        val searchOrb = view.findViewById<androidx.leanback.widget.SearchOrbView>(androidx.leanback.R.id.search_orb)
-        searchOrb?.orbIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_refresh)
+        // Safely change Search Orb icon to a Refresh icon
+        view.post { changeSearchOrbIcon(view) }
+    }
+
+    private fun changeSearchOrbIcon(view: View) {
+        if (view is androidx.leanback.widget.SearchOrbView) {
+            view.orbIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_refresh)
+            return
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                changeSearchOrbIcon(view.getChildAt(i))
+            }
+        }
     }
 
     private fun setupUI() {
