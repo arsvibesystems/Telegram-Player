@@ -107,6 +107,12 @@ class MainBrowseFragment : BrowseSupportFragment() {
         brandColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
         searchAffordanceColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
 
+        mainFragmentRegistry.registerFragment(PageRow::class.java, object : FragmentFactory<androidx.fragment.app.Fragment>() {
+            override fun createFragment(row: Any?): androidx.fragment.app.Fragment {
+                return androidx.fragment.app.Fragment()
+            }
+        })
+
         adapter = rowsAdapter
     }
     
@@ -220,9 +226,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
                     addChatRow("📺 Channels", channels)
                 }
 
-                // Settings Row
-                addSettingsRow()
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading chats", e)
                 Toast.makeText(context, "Error loading chats", Toast.LENGTH_LONG).show()
@@ -235,14 +238,9 @@ class MainBrowseFragment : BrowseSupportFragment() {
      * in the side shelf. This stays pinned at the top across refreshes.
      */
     private fun addSidebarActionRow() {
-        // We use an empty ListRow so that the header appears.
-        // The click is handled by the IconHeaderItemPresenter itself.
-        val emptyAdapter = ArrayObjectAdapter(object : Presenter() {
-            override fun onCreateViewHolder(parent: android.view.ViewGroup) = ViewHolder(android.view.View(parent.context))
-            override fun onBindViewHolder(viewHolder: ViewHolder, item: Any?) {}
-            override fun onUnbindViewHolder(viewHolder: ViewHolder) {}
-        })
-        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), emptyAdapter))
+        // We use a PageRow so it displays an empty fragment on the right,
+        // which prevents focus and scroll issues compared to an empty ListRow.
+        rowsAdapter.add(PageRow(HeaderItem(0, "⟳ Refresh")))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
@@ -253,15 +251,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
         chats.forEach { listRowAdapter.add(it) }
 
         val headerItem = HeaderItem(rowsAdapter.size().toLong(), title)
-        rowsAdapter.add(ListRow(headerItem, listRowAdapter))
-    }
-
-    private fun addSettingsRow() {
-        val cardPresenter = SettingsCardPresenter()
-        val listRowAdapter = ArrayObjectAdapter(cardPresenter)
-        listRowAdapter.add("Player Settings")
-        
-        val headerItem = HeaderItem(rowsAdapter.size().toLong(), "Settings")
         rowsAdapter.add(ListRow(headerItem, listRowAdapter))
     }
 
