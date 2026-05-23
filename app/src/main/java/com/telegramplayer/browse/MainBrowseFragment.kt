@@ -107,12 +107,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
         brandColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
         searchAffordanceColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
 
-        mainFragmentRegistry.registerFragment(PageRow::class.java, object : FragmentFactory<androidx.fragment.app.Fragment>() {
-            override fun createFragment(row: Any?): androidx.fragment.app.Fragment {
-                return androidx.leanback.app.RowsSupportFragment()
-            }
-        })
-
         adapter = rowsAdapter
     }
     
@@ -127,6 +121,10 @@ class MainBrowseFragment : BrowseSupportFragment() {
         // Launch Video Grid / handle sidebar actions on Click
         onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
             when {
+                item is String && item == "⟳ Tap to Refresh" -> {
+                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
+                    loadChats()
+                }
                 item is MediaItem -> {
                     if (item.mediaType == MediaType.DOCUMENT) {
                         Toast.makeText(context, "Long press 'Select' to download this file", Toast.LENGTH_SHORT).show()
@@ -235,12 +233,13 @@ class MainBrowseFragment : BrowseSupportFragment() {
 
     /**
      * Adds the Refresh action row as the first item
-     * in the side shelf. This stays pinned at the top across refreshes.
+     * in the side shelf. Clicking the card on the right triggers a refresh.
      */
     private fun addSidebarActionRow() {
-        // We use a PageRow so it displays an empty fragment on the right,
-        // which prevents focus and scroll issues compared to an empty ListRow.
-        rowsAdapter.add(PageRow(HeaderItem(0, "⟳ Refresh")))
+        val refreshPresenter = SettingsCardPresenter()
+        val refreshAdapter = ArrayObjectAdapter(refreshPresenter)
+        refreshAdapter.add("⟳ Tap to Refresh")
+        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), refreshAdapter))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
