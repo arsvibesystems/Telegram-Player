@@ -109,7 +109,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
 
         mainFragmentRegistry.registerFragment(PageRow::class.java, object : FragmentFactory<androidx.fragment.app.Fragment>() {
             override fun createFragment(row: Any?): androidx.fragment.app.Fragment {
-                return androidx.fragment.app.Fragment()
+                return androidx.leanback.app.RowsSupportFragment()
             }
         })
 
