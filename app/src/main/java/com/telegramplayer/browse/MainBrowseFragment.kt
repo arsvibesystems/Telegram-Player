@@ -94,6 +94,15 @@ class MainBrowseFragment : BrowseSupportFragment() {
         headersState = HEADERS_ENABLED
         isHeadersTransitionOnBackEnabled = true
         
+        setHeaderPresenterSelector(ClassPresenterSelector().apply {
+            addClassPresenter(Row::class.java, IconHeaderItemPresenter { action ->
+                if (action == "REFRESH") {
+                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
+                    loadChats()
+                }
+            })
+        })
+
         // Netflix-style branding
         brandColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
         searchAffordanceColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
@@ -112,10 +121,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
         // Launch Video Grid / handle sidebar actions on Click
         onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
             when {
-                item is SidebarAction && item.id == ACTION_REFRESH -> {
-                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
-                    loadChats()
-                }
                 item is MediaItem -> {
                     if (item.mediaType == MediaType.DOCUMENT) {
                         Toast.makeText(context, "Long press 'Select' to download this file", Toast.LENGTH_SHORT).show()
@@ -230,18 +235,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
      * in the side shelf. This stays pinned at the top across refreshes.
      */
     private fun addSidebarActionRow() {
-        val presenter = SidebarActionPresenter()
-
-        // Row 0 — Refresh
-        val refreshAdapter = ArrayObjectAdapter(presenter)
-        refreshAdapter.add(
-            SidebarAction(
-                id = ACTION_REFRESH,
-                label = "Refresh",
-                iconRes = R.drawable.ic_refresh
-            )
-        )
-        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), refreshAdapter))
+        // We use an empty ListRow so that the header appears.
+        // The click is handled by the IconHeaderItemPresenter itself.
+        val emptyAdapter = ArrayObjectAdapter(object : Presenter() {
+            override fun onCreateViewHolder(parent: android.view.ViewGroup) = ViewHolder(android.view.View(parent.context))
+            override fun onBindViewHolder(viewHolder: ViewHolder, item: Any?) {}
+            override fun onUnbindViewHolder(viewHolder: ViewHolder) {}
+        })
+        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), emptyAdapter))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
