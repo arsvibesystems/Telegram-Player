@@ -13,7 +13,7 @@ import com.telegramplayer.R
  * Custom Header Presenter for Sidebar Navigation.
  * Extends base RowHeaderPresenter with custom styling.
  */
-class IconHeaderItemPresenter(private val onHeaderAction: (String) -> Unit = {}) : RowHeaderPresenter() {
+class IconHeaderItemPresenter : RowHeaderPresenter() {
 
     override fun onCreateViewHolder(parent: ViewGroup): RowHeaderPresenter.ViewHolder {
         val viewHolder = super.onCreateViewHolder(parent) as RowHeaderPresenter.ViewHolder
@@ -38,24 +38,6 @@ class IconHeaderItemPresenter(private val onHeaderAction: (String) -> Unit = {})
 
     override fun onBindViewHolder(viewHolder: Presenter.ViewHolder, item: Any?) {
         super.onBindViewHolder(viewHolder, item)
-        val headerItem = (item as? Row)?.headerItem
-        
-        if (headerItem?.name == "⟳ Refresh") {
-            viewHolder.view.setOnKeyListener { _, keyCode, event ->
-                if (event.action == KeyEvent.ACTION_DOWN && (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
-                    onHeaderAction("REFRESH")
-                    true
-                } else {
-                    false
-                }
-            }
-            viewHolder.view.setOnClickListener {
-                onHeaderAction("REFRESH")
-            }
-        } else {
-            viewHolder.view.setOnKeyListener(null)
-            viewHolder.view.setOnClickListener(null)
-        }
     }
     
     override fun onSelectLevelChanged(holder: RowHeaderPresenter.ViewHolder) {

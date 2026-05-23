@@ -94,18 +94,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
         headersState = HEADERS_ENABLED
         isHeadersTransitionOnBackEnabled = true
         
-        setHeaderPresenterSelector(ClassPresenterSelector().apply {
-            addClassPresenter(Row::class.java, IconHeaderItemPresenter { action ->
-                if (action == "REFRESH") {
-                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
-                    loadChats()
-                }
-            })
-        })
-
         // Netflix-style branding
         brandColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
         searchAffordanceColor = ContextCompat.getColor(requireContext(), R.color.netflix_red)
+        
+        setOnSearchClickedListener {
+            Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
+            loadChats()
+        }
 
         adapter = rowsAdapter
     }
@@ -121,10 +117,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
         // Launch Video Grid / handle sidebar actions on Click
         onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
             when {
-                item is String && item == "⟳ Tap to Refresh" -> {
-                    Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
-                    loadChats()
-                }
                 item is MediaItem -> {
                     if (item.mediaType == MediaType.DOCUMENT) {
                         Toast.makeText(context, "Long press 'Select' to download this file", Toast.LENGTH_SHORT).show()
@@ -182,7 +174,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 rowsAdapter.clear()
 
                 // ── Sidebar Action Rows (always first) ──────────────────────────
-                addSidebarActionRow()
 
                 val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
                 val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
@@ -229,17 +220,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 Toast.makeText(context, "Error loading chats", Toast.LENGTH_LONG).show()
             }
         }
-    }
-
-    /**
-     * Adds the Refresh action row as the first item
-     * in the side shelf. Clicking the card on the right triggers a refresh.
-     */
-    private fun addSidebarActionRow() {
-        val refreshPresenter = SettingsCardPresenter()
-        val refreshAdapter = ArrayObjectAdapter(refreshPresenter)
-        refreshAdapter.add("⟳ Tap to Refresh")
-        rowsAdapter.add(ListRow(HeaderItem(0, "⟳ Refresh"), refreshAdapter))
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {
