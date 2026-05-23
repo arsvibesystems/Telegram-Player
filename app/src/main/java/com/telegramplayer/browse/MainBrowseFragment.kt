@@ -87,6 +87,10 @@ class MainBrowseFragment : BrowseSupportFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         view.background = ColorDrawable(Color.TRANSPARENT)
+        
+        // Change Search Orb icon to a Refresh icon instead of a magnifying glass
+        val searchOrb = view.findViewById<androidx.leanback.widget.SearchOrbView>(androidx.leanback.R.id.search_orb)
+        searchOrb?.orbIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_refresh)
     }
 
     private fun setupUI() {
@@ -185,10 +189,8 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 val latestMedia = latestMediaDeferred.await()
                 val chats = chatsDeferred.await()
 
-                // Remove only the loading/chat/settings rows (keep the 1 sidebar row at index 0)
-                while (rowsAdapter.size() > 1) {
-                    rowsAdapter.removeItems(1, 1)
-                }
+                // Remove the loading row before adding the actual chats
+                rowsAdapter.clear()
 
                 // Row: Latest Files
                 if (latestMedia.isNotEmpty()) {
