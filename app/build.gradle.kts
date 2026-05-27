@@ -14,6 +14,9 @@ android {
         versionCode = 2
         versionName = "1.0.1"
 
+        // TMDB API key for movie poster fetching
+        buildConfigField("String", "TMDB_API_KEY", "\"7c91e5ebefe05ac02cfa97ccc8edc7f6\"")
+
         // Filter for Fire TV architectures (arm64-v8a primary, armeabi-v7a fallback)
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -42,12 +45,16 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "11"
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     // Configure jniLibs location
@@ -56,6 +63,10 @@ android {
             jniLibs.srcDirs("src/main/jniLibs")
         }
     }
+}
+
+tasks.withType<JavaCompile> {
+    enabled = false
 }
 
 dependencies {

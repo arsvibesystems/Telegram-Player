@@ -44,5 +44,15 @@
     <!-- Netflix UI -->
     <color name="netflix_red">#E50914</color>
     <color name="netflix_background">#141414</color>
+
+    <!-- Premium Focus Effects -->
+    <color name="focus_glow">#E8B706</color>
+    <color name="focus_border">#FFFFFF</color>
+    <color name="card_overlay_start">#00000000</color>
+    <color name="card_overlay_end">#CC000000</color>
+    <color name="card_shadow">#40000000</color>
+    <color name="tmdb_placeholder_start">#FF1A1A2E</color>
+    <color name="tmdb_placeholder_end">#FF0D0D0D</color>
 </resources>
+
 

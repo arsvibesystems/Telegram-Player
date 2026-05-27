@@ -1,5 +1,6 @@
 package com.telegramplayer.browse
 
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -9,10 +10,21 @@ import androidx.leanback.widget.Presenter
 import com.telegramplayer.R
 import com.telegramplayer.data.MediaItem
 import com.telegramplayer.data.MediaType
+import com.telegramplayer.data.TmdbRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
- * Enhanced presenter for media item cards in the Leanback browse grid.
- * Netflix-style vertical poster cards (2:3 aspect ratio).
+ * Premium Netflix-style presenter for media item cards.
+ * 
+ * Visual design:
+ * - 2:3 poster aspect ratio (vertical movie poster style)
+ * - Rounded corners (12dp) with subtle card elevation
+ * - Focus: smooth 1.08x scale + cinema-gold glowing border + elevated info bar
+ * - Unfocus: spring-back to 1.0x with muted styling
+ * - Poster loading priority: Telegram thumbnail → TMDB poster → gradient placeholder
  */
 class MediaCardPresenter(
     private val cardWidth: Int = 220,
@@ -20,28 +32,42 @@ class MediaCardPresenter(
     private val onLongClick: ((MediaItem) -> Unit)? = null
 ) : Presenter() {
 
+    companion object {
+        private const val CORNER_RADIUS_DP = 12f
+        private const val FOCUS_SCALE = 1.08f
+        private const val FOCUS_ANIM_DURATION = 250L
+        private const val FOCUS_BORDER_WIDTH = 3
+    }
+
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val jobs = mutableMapOf<ViewHolder, kotlinx.coroutines.Job>()
+
     override fun onCreateViewHolder(parent: ViewGroup): ViewHolder {
+        val density = parent.context.resources.displayMetrics.density
+        val cornerRadius = CORNER_RADIUS_DP * density
+
         val cardView = ImageCardView(parent.context).apply {
             isFocusable = true
             isFocusableInTouchMode = true
-            
-            // Dark card background with subtle border
+
+            // Dark card background with rounded corners and subtle border
             val background = GradientDrawable().apply {
                 setColor(ContextCompat.getColor(context, R.color.card_background))
-                cornerRadius = 8f * context.resources.displayMetrics.density
+                setCornerRadius(cornerRadius)
                 setStroke(1, ContextCompat.getColor(context, R.color.card_border))
             }
             setBackgroundDrawable(background)
-            
-            // Info area styling
+
+            // Info area: dark translucent bottom section
             infoAreaBackground = GradientDrawable().apply {
                 setColor(ContextCompat.getColor(context, R.color.surface_elevated))
+                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, cornerRadius, cornerRadius, cornerRadius, cornerRadius)
             }
-            
-            // Force Center Crop to avoid margins
+
+            // Poster image fills card with center crop
             setMainImageScaleType(ImageView.ScaleType.CENTER_CROP)
         }
-        
+
         return ViewHolder(cardView)
     }
 
@@ -49,76 +75,141 @@ class MediaCardPresenter(
         val mediaItem = item as MediaItem
         val cardView = viewHolder.view as ImageCardView
         val context = cardView.context
+        val density = context.resources.displayMetrics.density
+        val cornerRadius = CORNER_RADIUS_DP * density
 
-        // Title 
+        // ── Title & Metadata ──
         cardView.titleText = mediaItem.title
-        
-        // Duration and size
-        val sizeText = formatSize(mediaItem.size)
         val durationText = formatDuration(mediaItem.duration)
-        cardView.contentText = "$durationText • $sizeText"
-        
+        val sizeText = formatSize(mediaItem.size)
+        cardView.contentText = if (mediaItem.duration > 0) "$durationText • $sizeText" else sizeText
+
         cardView.setMainImageDimensions(cardWidth, cardHeight)
 
-        if (mediaItem.thumbnailPath != null) {
-            com.bumptech.glide.Glide.with(context)
-                .load(mediaItem.thumbnailPath)
-                .centerCrop()
-                .into(cardView.mainImageView)
-            
-            cardView.mainImageView.clearColorFilter()
-        } else {
-            // Set icon based on media type
-            val iconRes = when (mediaItem.mediaType) {
-                MediaType.VIDEO -> android.R.drawable.ic_media_play
-                MediaType.AUDIO -> android.R.drawable.ic_lock_silent_mode_off
-                MediaType.DOCUMENT -> android.R.drawable.ic_menu_save
+        // ── Poster Loading (TMDB priority) ──
+        // Set gradient placeholder immediately to avoid blank flashes
+        setGradientPlaceholder(cardView, mediaItem)
+
+
+
+        if (mediaItem.mediaType == MediaType.VIDEO) {
+            val tmdbRepo = TmdbRepository.getInstance(context)
+            if (tmdbRepo.looksLikeMovie(mediaItem.fileName, mediaItem.duration, mediaItem.size)) {
+                // Priority 1: Fetch TMDB poster asynchronously
+                val job = scope.launch {
+                    val result = tmdbRepo.searchMoviePoster(mediaItem.fileName)
+                    
+                    // Safety check: skip if view is detached or context is destroyed
+                    if (context is android.app.Activity && context.isDestroyed) return@launch
+                    
+                    try {
+                        if (result != null && result.posterUrl.isNotEmpty()) {
+                            com.bumptech.glide.Glide.with(context)
+                                .load(result.posterUrl)
+                                .centerCrop()
+                                .placeholder(cardView.mainImageView.drawable)
+                                .into(cardView.mainImageView)
+                            cardView.mainImageView.clearColorFilter()
+                        } else if (mediaItem.thumbnailPath != null) {
+                            // Priority 2: Fallback to Telegram-provided thumbnail
+                            com.bumptech.glide.Glide.with(context)
+                                .load(mediaItem.thumbnailPath)
+                                .centerCrop()
+                                .placeholder(cardView.mainImageView.drawable)
+                                .into(cardView.mainImageView)
+                            cardView.mainImageView.clearColorFilter()
+                        }
+                    } catch (e: Exception) {
+                        // Ignore Glide destroyed activity exceptions
+                    }
+                }
+                jobs[viewHolder] = job
+            } else {
+                // Not a movie (e.g. short clip). Priority: Telegram thumbnail
+                if (mediaItem.thumbnailPath != null) {
+                    com.bumptech.glide.Glide.with(context)
+                        .load(mediaItem.thumbnailPath)
+                        .centerCrop()
+                        .placeholder(cardView.mainImageView.drawable)
+                        .into(cardView.mainImageView)
+                    cardView.mainImageView.clearColorFilter()
+                }
             }
-            
-            cardView.mainImageView.apply {
-                setImageResource(iconRes)
-                scaleType = ImageView.ScaleType.CENTER
-                setColorFilter(ContextCompat.getColor(context, R.color.primary))
-                setBackgroundColor(ContextCompat.getColor(context, R.color.surface))
+        } else {
+            // Not a video (audio/doc). Priority: Telegram thumbnail
+            if (mediaItem.thumbnailPath != null) {
+                com.bumptech.glide.Glide.with(context)
+                    .load(mediaItem.thumbnailPath)
+                    .centerCrop()
+                    .placeholder(cardView.mainImageView.drawable)
+                    .into(cardView.mainImageView)
+                cardView.mainImageView.clearColorFilter()
             }
         }
-        
-        // Focus listener for visual feedback
+
+        // ── Premium Focus/Unfocus Animations ──
         cardView.setOnFocusChangeListener { view, hasFocus ->
             val v = view as ImageCardView
             if (hasFocus) {
-                // Scale Up - meaningful pop
-                v.animate().scaleX(1.15f).scaleY(1.15f).setDuration(200).start()
+                // Smooth scale up with overshoot interpolator feel
+                v.animate()
+                    .scaleX(FOCUS_SCALE)
+                    .scaleY(FOCUS_SCALE)
+                    .setDuration(FOCUS_ANIM_DURATION)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
+                    .start()
 
-                // Focused Background & Netflix Red Border
-                val bg = GradientDrawable().apply {
+                // Cinema-gold glowing border
+                val focusBg = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.card_background_focused))
-                    cornerRadius = 8f * context.resources.displayMetrics.density
-                    setStroke(4, ContextCompat.getColor(context, R.color.netflix_red))
+                    setCornerRadius(cornerRadius)
+                    setStroke(
+                        (FOCUS_BORDER_WIDTH * density).toInt(),
+                        ContextCompat.getColor(context, R.color.focus_glow)
+                    )
                 }
-                v.background = bg
-                v.infoAreaBackground = GradientDrawable().apply {
-                     setColor(ContextCompat.getColor(context, R.color.netflix_red))
-                }
-            } else {
-                // Scale Down
-                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(200).start()
+                v.background = focusBg
 
-                // Normal Background
-                val bg = GradientDrawable().apply {
+                // Highlighted info area (accent color)
+                v.infoAreaBackground = GradientDrawable().apply {
+                    setColor(ContextCompat.getColor(context, R.color.netflix_red))
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, cornerRadius, cornerRadius, cornerRadius, cornerRadius)
+                }
+
+                // Bring to front for overlap effect
+                v.translationZ = 8f * density
+
+            } else {
+                // Smooth scale down
+                v.animate()
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .setDuration(FOCUS_ANIM_DURATION)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
+                    .start()
+
+                // Normal subtle border
+                val normalBg = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.card_background))
-                    cornerRadius = 8f * context.resources.displayMetrics.density
+                    setCornerRadius(cornerRadius)
                     setStroke(1, ContextCompat.getColor(context, R.color.card_border))
                 }
-                v.background = bg
+                v.background = normalBg
+
+                // Normal info area
                 v.infoAreaBackground = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.surface_elevated))
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, cornerRadius, cornerRadius, cornerRadius, cornerRadius)
                 }
+
+                // Reset elevation
+                v.translationZ = 0f
             }
         }
-        
+
+        // ── Long Click (document download) ──
         if (onLongClick != null) {
-            cardView.setOnLongClickListener { 
+            cardView.setOnLongClickListener {
                 onLongClick.invoke(mediaItem)
                 true
             }
@@ -127,19 +218,55 @@ class MediaCardPresenter(
 
     override fun onUnbindViewHolder(viewHolder: ViewHolder) {
         val cardView = viewHolder.view as ImageCardView
+        jobs.remove(viewHolder)?.cancel()
+        
+        try {
+            com.bumptech.glide.Glide.with(cardView.context).clear(cardView.mainImageView)
+        } catch (e: Exception) {}
+        
         cardView.mainImage = null
         cardView.onFocusChangeListener = null
     }
 
+    /**
+     * Sets a gradient placeholder with a media-type icon.
+     * Creates a premium dark gradient background instead of a blank card.
+     */
+    private fun setGradientPlaceholder(cardView: ImageCardView, mediaItem: MediaItem) {
+        val context = cardView.context
+
+        // Set gradient background on the image area
+        val gradientDrawable = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(
+                ContextCompat.getColor(context, R.color.tmdb_placeholder_start),
+                ContextCompat.getColor(context, R.color.tmdb_placeholder_end)
+            )
+        )
+        cardView.mainImageView.setImageDrawable(gradientDrawable)
+
+        // Overlay a centered media-type icon
+        val iconRes = when (mediaItem.mediaType) {
+            MediaType.VIDEO -> android.R.drawable.ic_media_play
+            MediaType.AUDIO -> android.R.drawable.ic_lock_silent_mode_off
+            MediaType.DOCUMENT -> android.R.drawable.ic_menu_save
+        }
+        cardView.mainImageView.apply {
+            setImageResource(iconRes)
+            scaleType = ImageView.ScaleType.CENTER
+            setColorFilter(ContextCompat.getColor(context, R.color.text_secondary))
+            setBackgroundDrawable(gradientDrawable)
+        }
+    }
+
     private fun formatDuration(seconds: Int): String {
+        if (seconds <= 0) return ""
         val hours = seconds / 3600
         val minutes = (seconds % 3600) / 60
-        val secs = seconds % 60
-
         return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, secs)
+            "${hours}h ${minutes}m"
         } else {
-            String.format("%d:%02d", minutes, secs)
+            "${minutes}m"
         }
     }
 

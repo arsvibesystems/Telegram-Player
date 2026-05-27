@@ -12,3 +12,10 @@
 
 # Keep Leanback classes
 -keep class androidx.leanback.** { *; }
+
+# Keep BuildConfig (contains TMDB API key)
+-keep class com.telegramplayer.BuildConfig { *; }
+
+# Keep Glide generated API
+-keep public class * implements com.bumptech.glide.module.GlideModule
+-keep class * extends com.bumptech.glide.module.AppGlideModule { *; }
