@@ -85,8 +85,8 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
     fun getStreamUrl(fileId: Int): String {
         if (!this.isAlive) {
             try {
-                this.start(SOCKET_READ_TIMEOUT, false)
-                Log.d(TAG, "Auto-started proxy server on port $listeningPort")
+                this.start(30000, false) // 30 seconds timeout to allow slow networks to establish TDLib connection
+                Log.e(TAG, "Auto-started proxy server on port $listeningPort")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to auto-start proxy server", e)
             }
@@ -108,7 +108,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
             val elapsed = System.currentTimeMillis() - lastAccess
             
             if (elapsed >= CLEANUP_DELAY_MS) {
-                Log.d(TAG, "Cleaning up cached file: $fileId (inactive for ${elapsed/1000}s)")
+                Log.e(TAG, "Cleaning up cached file: $fileId (inactive for ${elapsed/1000}s)")
                 
                 // Clear local caches
                 fileSizeCache.remove(fileId)
@@ -138,7 +138,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
      * TDLib's optimizeStorage can reclaim disk space without stale references.
      */
     fun clearAllCaches() {
-        Log.d(TAG, "Clearing all proxy caches (${fileSizeCache.size} files tracked)")
+        Log.e(TAG, "Clearing all proxy caches (${fileSizeCache.size} files tracked)")
         // Cancel all pending cleanup runnables
         cleanupRunnables.values.forEach { handler.removeCallbacks(it) }
         
@@ -153,7 +153,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
-        Log.d(TAG, "Request: ${session.method} $uri")
+        Log.e(TAG, "Request: ${session.method} $uri")
 
         if (!uri.startsWith("/stream/")) {
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
@@ -177,7 +177,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         // Size still 0? Attempt resolution via remoteFileId (file received while app was closed)
         if (fileSize <= 0 && remoteFileIdCache.containsKey(fileId)) {
             val remoteId = remoteFileIdCache[fileId]!!
-            Log.w(TAG, "fileId=$fileId size=0, resolving via remoteFileId in serve()")
+            Log.e(TAG, "fileId=$fileId size=0, resolving via remoteFileId in serve()")
             val newId = runBlocking { TelegramPlayerApp.getTdClient().getFileByRemoteId(remoteId) }
             if (newId != null) {
                 resolvedFileId = newId
@@ -212,7 +212,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
 
         // Parse Range header
         val rangeHeader = session.headers["range"]
-        Log.d(TAG, "Range header: $rangeHeader, File size: $fileSize")
+        Log.e(TAG, "Range header: $rangeHeader, File size: $fileSize")
 
         return if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
             handleRangeRequest(resolvedFileId, fileSize, rangeHeader, mimeType)
@@ -248,7 +248,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
         }
 
         val contentLength = endByte - startByte + 1
-        Log.d(TAG, "Serving range: $startByte-$endByte/$fileSize (${contentLength} bytes)")
+        Log.e(TAG, "Serving range: $startByte-$endByte/$fileSize (${contentLength} bytes)")
 
         val inputStream = TdLibInputStream(fileId, startByte, endByte)
         
@@ -266,7 +266,7 @@ class StreamingProxyServer(port: Int = 0) : NanoHTTPD(port) {
     }
 
     private fun handleFullRequest(fileId: Int, fileSize: Long, mimeType: String): Response {
-        Log.d(TAG, "Serving full file: fileId=$fileId, size=$fileSize")
+        Log.e(TAG, "Serving full file: fileId=$fileId, size=$fileSize")
 
         val inputStream = TdLibInputStream(fileId, 0, fileSize - 1)
         

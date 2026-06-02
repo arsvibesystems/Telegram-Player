@@ -161,7 +161,9 @@ class VideoGridFragment : VerticalGridSupportFragment() {
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading videos", e)
-                Toast.makeText(context, "Error loading videos", Toast.LENGTH_SHORT).show()
+                if (isAdded) {
+                    context?.let { Toast.makeText(it, "Error loading videos", Toast.LENGTH_SHORT).show() }
+                }
             }
         }
     }

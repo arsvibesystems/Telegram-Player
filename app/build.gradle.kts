@@ -81,6 +81,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-process:2.6.2")
 
     // NanoHTTPD for local streaming proxy
     implementation("org.nanohttpd:nanohttpd:2.3.1")

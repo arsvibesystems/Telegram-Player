@@ -10,12 +10,7 @@ import com.telegramplayer.data.PlayerManager
 
 class SettingsFragment : GuidedStepSupportFragment() {
 
-    private lateinit var playerManager: PlayerManager
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        playerManager = PlayerManager(requireContext())
-    }
+    private val playerManager: PlayerManager by lazy { PlayerManager(requireContext()) }
 
     override fun onCreateGuidance(savedInstanceState: Bundle?): GuidanceStylist.Guidance {
         return GuidanceStylist.Guidance(
@@ -32,7 +27,7 @@ class SettingsFragment : GuidedStepSupportFragment() {
 
         if (players.isEmpty()) {
             actions.add(
-                GuidedAction.Builder(context)
+                GuidedAction.Builder(requireContext())
                     .id(0)
                     .title("No video players found")
                     .description("Please install a video player like VLC or MX Player")
@@ -46,7 +41,7 @@ class SettingsFragment : GuidedStepSupportFragment() {
             val isSelected = player.packageName == selectedPackage
             
             actions.add(
-                GuidedAction.Builder(context)
+                GuidedAction.Builder(requireContext())
                     .id(index.toLong())
                     .title(player.label)
                     .description(if (isSelected) "Currently selected" else null)

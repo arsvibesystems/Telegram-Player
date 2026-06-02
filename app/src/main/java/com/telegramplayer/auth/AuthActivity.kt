@@ -45,22 +45,17 @@ class AuthActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_auth)
 
+        // Initialize TDLib BEFORE inflating layout so it can start reading
+        // auth state from disk while the UI inflates in parallel.
+        // For returning users, TDLib reaches Authorized almost instantly
+        // and the observer navigates to MainActivity before auth UI renders.
+        // TDLib is now initialized globally in TelegramPlayerApp.kt
+
+        setContentView(R.layout.activity_auth)
         initViews()
         setupListeners()
         observeAuthState()
-        
-        // Telegram API credentials
-        tdClient.apiId = 31075029
-        tdClient.apiHash = "7b098845a66acb65bdf33520d8d35602"
-
-        if (tdClient.apiId == 0 || tdClient.apiHash.isEmpty()) {
-            showCredentialsError()
-        } else {
-            // Initialize TDLib after credentials are set
-            tdClient.initialize()
-        }
     }
 
     private fun initViews() {

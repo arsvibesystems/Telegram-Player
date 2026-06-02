@@ -30,6 +30,7 @@ class TdClientManager(private val context: Context) {
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
+    private var isShuttingDown = false
 
     // Cache of fileId -> local file path to avoid repeated TDLib lookups
     private val localPathCache = ConcurrentHashMap<Int, String>()
@@ -51,7 +52,7 @@ class TdClientManager(private val context: Context) {
     var apiHash: String = ""
 
     init {
-        Log.e(TAG, "TdClientManager created. ClientId: $clientId")
+        Log.d(TAG, "TdClientManager created. ClientId: $clientId")
     }
 
     /**
@@ -60,7 +61,7 @@ class TdClientManager(private val context: Context) {
      */
     fun initialize() {
         if (isInitialized) {
-            Log.e(TAG, "Already initialized, skipping")
+            Log.d(TAG, "Already initialized, skipping")
             return
         }
         if (apiId == 0 || apiHash.isEmpty()) {
@@ -68,7 +69,7 @@ class TdClientManager(private val context: Context) {
             return
         }
         isInitialized = true
-        Log.e(TAG, "Initializing TDLib with apiId: $apiId")
+        Log.d(TAG, "Initializing TDLib with apiId: $apiId")
         startReceiver()
         // Send a dummy request to trigger the first updateAuthorizationState
         triggerAuthorizationStateUpdate()
@@ -86,7 +87,7 @@ class TdClientManager(private val context: Context) {
     }
 
     private fun startReceiver() {
-        Log.e(TAG, "Starting receiver loop")
+        Log.d(TAG, "Starting receiver loop")
         scope.launch {
             while (isActive) {
                 try {
@@ -96,8 +97,6 @@ class TdClientManager(private val context: Context) {
                     if (result != null) {
                         Log.e(TAG, "Received raw json: $result") // Verbose logging
                         handleResponse(result)
-                    } else {
-                         Log.e(TAG, "Received null response (timeout)")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in receiver loop", e)
@@ -112,16 +111,12 @@ class TdClientManager(private val context: Context) {
             val extra = json.optString("@extra", "")
             val type = json.optString("@type", "")
 
-            Log.e(TAG, "Handling event type: $type")
 
             // Handle pending request responses
             if (extra.isNotEmpty()) {
                 val deferred = pendingRequests.remove(extra)
                 if (deferred != null) {
-                    Log.e(TAG, "Completing request: $extra")
                     deferred.complete(json)
-                } else {
-                    Log.e(TAG, "No pending request found for extra: $extra")
                 }
             }
 
@@ -145,6 +140,50 @@ class TdClientManager(private val context: Context) {
             "authorizationStateWaitTdlibParameters" -> {
                 _authState.value = AuthState.WaitingForParameters
                 setTdlibParameters()
+
+                // Safety check: if TDLib takes more than 5 seconds to transition out of this state
+                scope.launch {
+                    delay(5000)
+                    if (_authState.value == AuthState.WaitingForParameters) {
+                        Log.e(TAG, "TDLib stuck in WaitingForParameters for > 5s. Forcing reset to bypass corrupted binlog.")
+                        
+                        // Close blocked instance
+                        try {
+                            val request = JSONObject().apply {
+                                put("@type", "close")
+                            }
+                            send(request.toString())
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error closing stuck TDLib", e)
+                        }
+                        
+                        // Clear cache directory
+                        val dbDir = java.io.File(context.filesDir, "tdlib")
+                        if (dbDir.exists()) {
+                            dbDir.deleteRecursively()
+                        }
+                        
+                        // Force re-initialize
+                        clientId = io.github.up9cloud.td.JsonClient.td_create_client_id()
+                        pendingRequests.forEach { (_, deferred) -> deferred.cancel() }
+                        pendingRequests.clear()
+                        localPathCache.clear()
+                        
+                        triggerAuthorizationStateUpdate()
+                    }
+                }
+            }
+            "authorizationStateWaitEncryptionKey" -> {
+                _authState.value = AuthState.WaitingForEncryptionKey
+                // Run on IO dispatcher so key verification doesn't block network thread
+                scope.launch(Dispatchers.IO) {
+                    val request = JSONObject().apply {
+                        put("@type", "checkDatabaseEncryptionKey")
+                        put("encryption_key", "")
+                        put("@extra", getNextRequestId())
+                    }
+                    send(request.toString())
+                }
             }
             "authorizationStateWaitPhoneNumber" -> {
                 _authState.value = AuthState.WaitingForPhoneNumber
@@ -162,18 +201,24 @@ class TdClientManager(private val context: Context) {
             }
             "authorizationStateReady" -> {
                 _authState.value = AuthState.Authorized
-                // Clean up old cache files on startup
-                optimizeStorage()
+                // Defer write-heavy storage cleanup to let TDLib's read path settle first
+                // This avoids disk I/O contention on Fire TV's slow flash during startup
+                scope.launch {
+                    delay(10_000)
+                    optimizeStorage()
+                }
                 // Force sync chats on startup
                 loadChats()
             }
             "authorizationStateClosed" -> {
                 _authState.value = AuthState.Closed
                 
-                // Clear the corrupted/closed database directory to ensure a fresh session
-                val dbDir = java.io.File(context.filesDir, "tdlib")
-                if (dbDir.exists()) {
-                    dbDir.deleteRecursively()
+                if (!isShuttingDown) {
+                    // Clear the corrupted database directory to ensure a fresh session
+                    val dbDir = java.io.File(context.filesDir, "tdlib")
+                    if (dbDir.exists()) {
+                        dbDir.deleteRecursively()
+                    }
                 }
                 
                 // TDLib client is dead after Closed state. We must recreate it.
@@ -182,8 +227,39 @@ class TdClientManager(private val context: Context) {
                 pendingRequests.forEach { (_, deferred) -> deferred.cancel() }
                 pendingRequests.clear()
                 localPathCache.clear()
-                triggerAuthorizationStateUpdate()
+                
+                if (!isShuttingDown) {
+                    triggerAuthorizationStateUpdate()
+                }
             }
+        }
+    }
+
+    private fun setOptionBoolean(name: String, value: Boolean) {
+        val request = JSONObject().apply {
+            put("@type", "setOption")
+            put("name", name)
+            put("value", JSONObject().apply {
+                put("@type", "optionValueBoolean")
+                put("value", value)
+            })
+            put("@extra", getNextRequestId())
+        }
+        send(request.toString())
+    }
+
+    /**
+     * Clean WAL/SHM files before TDLib opens the database.
+     * WAL recovery on Fire TV's slow flash storage is expensive and causes startup lag.
+     * Safe because: (1) close() checkpoints WAL, (2) data is recoverable from Telegram servers,
+     * (3) Fire TV often kills background apps without calling onDestroy.
+     */
+    private fun cleanWalFiles(dbDir: File) {
+        dbDir.listFiles()?.filter {
+            it.name.endsWith(".wal") || it.name.endsWith(".shm")
+        }?.forEach { file ->
+            val deleted = file.delete()
+            Log.d(TAG, "WAL cleanup: ${file.name} deleted=$deleted")
         }
     }
 
@@ -191,10 +267,15 @@ class TdClientManager(private val context: Context) {
         val dbDir = File(context.filesDir, "tdlib")
         dbDir.mkdirs()
 
+        // Disable stats and time sync for faster startup
+        setOptionBoolean("disable_persistent_network_statistics", true)
+        setOptionBoolean("disable_time_adjustment_protection", true)
+
         val params = JSONObject().apply {
             put("@type", "setTdlibParameters")
             put("database_directory", dbDir.absolutePath)
             put("use_message_database", true)
+            put("use_file_database", false) // Reduces disk I/O — file lookups still work via getFile API
             put("use_secret_chats", false)
             put("api_id", apiId)
             put("api_hash", apiHash)
@@ -487,6 +568,7 @@ class TdClientManager(private val context: Context) {
 
     private suspend fun parseVideoMessage(message: JSONObject, chatId: Long): MediaItem? {
         val content = message.getJSONObject("content")
+        Log.e(TAG, "Parsed video message content: $content")
         if (content.getString("@type") != "messageVideo") return null
 
         val video = content.getJSONObject("video")
@@ -656,7 +738,7 @@ class TdClientManager(private val context: Context) {
      * Includes retry logic for transient failures.
      */
     suspend fun readFilePart(fileId: Int, offset: Long, count: Long): ByteArray? {
-        val maxRetries = 3
+        val maxRetries = 15
         var lastException: Exception? = null
         
         repeat(maxRetries) { attempt ->
@@ -667,7 +749,7 @@ class TdClientManager(private val context: Context) {
                 lastException = e
                 Log.w(TAG, "Read file part attempt ${attempt + 1}/$maxRetries failed", e)
                 if (attempt < maxRetries - 1) {
-                    kotlinx.coroutines.delay(500L * (attempt + 1)) // Exponential backoff
+                    kotlinx.coroutines.delay(1000L) // Wait 1 second before checking again
                 }
             }
         }
@@ -950,7 +1032,6 @@ class TdClientManager(private val context: Context) {
     }
 
     private fun send(request: String) {
-        Log.e(TAG, "Sending to client $clientId: $request")
         JsonClient.td_send(clientId, request)
     }
 
@@ -1056,14 +1137,63 @@ class TdClientManager(private val context: Context) {
         }
     }
 
+    fun logOut() {
+        scope.launch {
+            try {
+                Log.d(TAG, "Logging out of TDLib...")
+                val request = JSONObject().apply {
+                    put("@type", "logOut")
+                }
+                send(request.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "Error logging out", e)
+            }
+        }
+    }
+
     fun close() {
-        scope.cancel()
+        isShuttingDown = true
+        scope.launch {
+            try {
+                Log.d(TAG, "Closing TDLib client gracefully")
+                
+                // Trigger a database optimization before close as a safety measure for compaction
+                val optimizeRequest = JSONObject().apply {
+                    put("@type", "optimizeStorage")
+                    put("size", MAX_CACHE_SIZE)
+                    put("ttl", MAX_FILE_AGE_SECONDS)
+                    put("count", -1)
+                    put("immunity_delay", 0)
+                    put("chat_ids", org.json.JSONArray())
+                    put("exclude_chat_ids", org.json.JSONArray())
+                    put("return_deleted_file_statistics", false)
+                    put("chat_limit", 0)
+                }
+                send(optimizeRequest.toString())
+
+                val request = JSONObject().apply {
+                    put("@type", "close")
+                }
+                send(request.toString())
+
+                // Gracefully wait for pending updates to finish writing to disk and binlog compaction
+                val timeoutMs = 5000L
+                val startTime = System.currentTimeMillis()
+                while (_authState.value != AuthState.Closed && System.currentTimeMillis() - startTime < timeoutMs) {
+                    delay(100)
+                }
+                Log.d(TAG, "TDLib closed gracefully. State: ${_authState.value}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing TDLib client", e)
+            }
+        }
     }
 }
 
 sealed class AuthState {
     object Initial : AuthState()
     object WaitingForParameters : AuthState()
+    object WaitingForEncryptionKey : AuthState()
     object WaitingForPhoneNumber : AuthState()
     object WaitingForQrScan : AuthState()
     object WaitingForCode : AuthState()

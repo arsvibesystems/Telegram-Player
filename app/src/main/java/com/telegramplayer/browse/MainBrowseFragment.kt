@@ -149,6 +149,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 item is String && item == "Player Settings" -> {
                     startActivity(SettingsActivity.newIntent(requireContext()))
                 }
+                item is String && item == "Logout" -> {
+                    tdClient.logOut()
+                    val intent = Intent(requireContext(), com.telegramplayer.auth.AuthActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    }
+                    startActivity(intent)
+                    requireActivity().finish()
+                }
             }
         }
 
@@ -185,22 +193,40 @@ class MainBrowseFragment : BrowseSupportFragment() {
     private fun loadChats() {
         lifecycleScope.launch {
             try {
-                // Loading Indicator — keep sidebar action rows at top
-                rowsAdapter.clear()
+                val cache = com.telegramplayer.data.StartupCache(requireContext())
 
-                // ── Sidebar Action Rows (always first) ──────────────────────────
+                // ── Phase 1: Instant UI from startup cache (< 5ms) ──────────
+                val cachedChats = cache.loadChats()
+                val cachedMedia = cache.loadMediaItems()
 
-                val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
-                val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
-                rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
+                if (cachedChats != null || cachedMedia != null) {
+                    rowsAdapter.clear()
+                    cachedMedia?.let { addLatestFilesRow(it) }
+                    if (cachedChats != null) {
+                        val privateChats = cachedChats.filter { it.type == ChatType.PRIVATE }
+                        val groups = cachedChats.filter { it.type == ChatType.GROUP }
+                        val channels = cachedChats.filter { it.type == ChatType.CHANNEL }
+                        if (privateChats.isNotEmpty()) addChatRow("💬 Private Chats", privateChats)
+                        if (groups.isNotEmpty()) addChatRow("👥 Groups", groups)
+                        if (channels.isNotEmpty()) addChatRow("📺 Channels", channels)
+                    }
+                    addSettingsRow()
+                } else {
+                    // No cache (first launch) — show loading indicator
+                    rowsAdapter.clear()
+                    val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
+                    val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
+                    rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
+                }
 
+                // ── Phase 2: Refresh from TDLib in background ────────────
                 val latestMediaDeferred = async(Dispatchers.IO) { tdClient.getLatestMedia(60) }
                 val chatsDeferred = async(Dispatchers.IO) { tdClient.getChats(150) }
                 
                 val latestMedia = latestMediaDeferred.await()
                 val chats = chatsDeferred.await()
 
-                // Remove the loading row before adding the actual chats
+                // Update UI with fresh data
                 rowsAdapter.clear()
 
                 // Row: Latest Files
@@ -213,20 +239,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 val groups = chats.filter { it.type == ChatType.GROUP }
                 val channels = chats.filter { it.type == ChatType.CHANNEL }
 
-                // Row: Private Chats
-                if (privateChats.isNotEmpty()) {
-                    addChatRow("💬 Private Chats", privateChats)
-                }
+                if (privateChats.isNotEmpty()) addChatRow("💬 Private Chats", privateChats)
+                if (groups.isNotEmpty()) addChatRow("👥 Groups", groups)
+                if (channels.isNotEmpty()) addChatRow("📺 Channels", channels)
+                addSettingsRow()
 
-                // Row: Groups
-                if (groups.isNotEmpty()) {
-                    addChatRow("👥 Groups", groups)
-                }
-
-                // Row: Channels
-                if (channels.isNotEmpty()) {
-                    addChatRow("📺 Channels", channels)
-                }
+                // Save to cache for next launch
+                cache.saveChats(chats)
+                cache.saveMediaItems(latestMedia.take(50))
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading chats", e)
@@ -243,6 +263,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
         chats.forEach { listRowAdapter.add(it) }
 
         val headerItem = HeaderItem(rowsAdapter.size().toLong(), title)
+        rowsAdapter.add(ListRow(headerItem, listRowAdapter))
+    }
+
+    private fun addSettingsRow() {
+        val listRowAdapter = ArrayObjectAdapter(SettingsCardPresenter())
+        listRowAdapter.add("Player Settings")
+        listRowAdapter.add("Logout")
+        val headerItem = HeaderItem(rowsAdapter.size().toLong(), "⚙️ Settings")
         rowsAdapter.add(ListRow(headerItem, listRowAdapter))
     }
 
