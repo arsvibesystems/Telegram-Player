@@ -200,7 +200,7 @@ class VideoGridFragment : VerticalGridSupportFragment() {
                 val playerManager = com.telegramplayer.data.PlayerManager(requireContext())
                 val selectedPackage = playerManager.getSelectedPlayer()
 
-                if (selectedPackage != null) {
+                if (selectedPackage != null && selectedPackage != com.telegramplayer.data.PlayerManager.PACKAGE_ASK_EVERY_TIME) {
                     intent.setPackage(selectedPackage)
                     try {
                         startActivity(intent)

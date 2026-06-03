@@ -33,7 +33,7 @@ class MediaCardPresenter(
 ) : Presenter() {
 
     companion object {
-        private const val CORNER_RADIUS_DP = 12f
+        private const val CORNER_RADIUS_DP = 0f
         private const val FOCUS_SCALE = 1.08f
         private const val FOCUS_ANIM_DURATION = 250L
         private const val FOCUS_BORDER_WIDTH = 3
@@ -57,6 +57,11 @@ class MediaCardPresenter(
                 setStroke(1, ContextCompat.getColor(context, R.color.card_border))
             }
             setBackgroundDrawable(background)
+
+            // Setup title text for marquee
+            val titleView = findViewById<android.widget.TextView>(androidx.leanback.R.id.title_text)
+            titleView?.setSingleLine(true)
+            titleView?.marqueeRepeatLimit = -1
 
             // Info area: dark translucent bottom section
             infoAreaBackground = GradientDrawable().apply {
@@ -150,48 +155,53 @@ class MediaCardPresenter(
         // ── Premium Focus/Unfocus Animations ──
         cardView.setOnFocusChangeListener { view, hasFocus ->
             val v = view as ImageCardView
+            val titleView = v.findViewById<android.widget.TextView>(androidx.leanback.R.id.title_text)
+            
             if (hasFocus) {
-                // Smooth scale up with overshoot interpolator feel
-                v.animate()
-                    .scaleX(FOCUS_SCALE)
-                    .scaleY(FOCUS_SCALE)
-                    .setDuration(FOCUS_ANIM_DURATION)
-                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
-                    .start()
+                // Enable marquee scrolling
+                titleView?.ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
+                titleView?.isSelected = true
 
-                // Cinema-gold glowing border
+                // No Scale
+                v.animate().cancel()
+                v.scaleX = 1.0f
+                v.scaleY = 1.0f
+
+                // Cinema-gold glowing border overlay
                 val focusBg = GradientDrawable().apply {
-                    setColor(ContextCompat.getColor(context, R.color.card_background_focused))
-                    setCornerRadius(cornerRadius)
+                    setColor(android.graphics.Color.TRANSPARENT)
+                    setCornerRadius(0f)
                     setStroke(
-                        (FOCUS_BORDER_WIDTH * density).toInt(),
+                        (3 * context.resources.displayMetrics.density).toInt(),
                         ContextCompat.getColor(context, R.color.focus_glow)
                     )
                 }
-                v.background = focusBg
+                v.foreground = focusBg
 
                 // Highlighted info area (accent color)
                 v.infoAreaBackground = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.netflix_red))
-                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, cornerRadius, cornerRadius, cornerRadius, cornerRadius)
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
                 }
 
                 // Bring to front for overlap effect
                 v.translationZ = 8f * density
 
             } else {
-                // Smooth scale down
-                v.animate()
-                    .scaleX(1.0f)
-                    .scaleY(1.0f)
-                    .setDuration(FOCUS_ANIM_DURATION)
-                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
-                    .start()
+                // Disable marquee scrolling
+                titleView?.ellipsize = android.text.TextUtils.TruncateAt.END
+                titleView?.isSelected = false
 
-                // Normal subtle border
+                // No Scale
+                v.animate().cancel()
+                v.scaleX = 1.0f
+                v.scaleY = 1.0f
+
+                // Normal Background
+                v.foreground = null
                 val normalBg = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.card_background))
-                    setCornerRadius(cornerRadius)
+                    setCornerRadius(0f)
                     setStroke(1, ContextCompat.getColor(context, R.color.card_border))
                 }
                 v.background = normalBg
@@ -199,7 +209,7 @@ class MediaCardPresenter(
                 // Normal info area
                 v.infoAreaBackground = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.surface_elevated))
-                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, cornerRadius, cornerRadius, cornerRadius, cornerRadius)
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
                 }
 
                 // Reset elevation

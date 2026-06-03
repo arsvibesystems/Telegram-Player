@@ -33,15 +33,29 @@ class ChatCardPresenter : Presenter() {
             // Dark card background
             val background = GradientDrawable().apply {
                 setColor(ContextCompat.getColor(context, R.color.card_background))
-                cornerRadius = 16f * context.resources.displayMetrics.density
+                cornerRadius = 0f
             }
             setBackgroundDrawable(background)
             
             // Info area styling
             infoAreaBackground = GradientDrawable().apply {
                 setColor(ContextCompat.getColor(context, R.color.surface_elevated))
-                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 16f, 16f, 16f, 16f)
+                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
             }
+            
+            // Add vertical margins to prevent shadow clipping by the row container
+            layoutParams = android.view.ViewGroup.MarginLayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val margin = (16 * context.resources.displayMetrics.density).toInt()
+                setMargins(0, margin, 0, margin)
+            }
+            
+            // Setup title text for marquee
+            val titleView = findViewById<android.widget.TextView>(androidx.leanback.R.id.title_text)
+            titleView?.setSingleLine(true)
+            titleView?.marqueeRepeatLimit = -1
         }
         return ViewHolder(cardView)
     }
@@ -54,11 +68,10 @@ class ChatCardPresenter : Presenter() {
         cardView.titleText = chat.title
         cardView.contentText = if (chat.mediaCount > 0) "${chat.mediaCount} videos" else ""
         
-        // Load Thumbnail or Fallback
         if (chat.photoPath != null) {
             Glide.with(context)
                 .load(chat.photoPath)
-                .apply(RequestOptions().transform(CircleCrop()))
+                .apply(RequestOptions.fitCenterTransform())
                 .error(R.drawable.ic_folder)
                 .into(cardView.mainImageView)
         } else {
@@ -67,35 +80,65 @@ class ChatCardPresenter : Presenter() {
             cardView.mainImageView.setColorFilter(getColorForId(chat.id))
         }
 
-        // Custom Focus Handling - No Zoom, just Border
+        // Custom Focus Handling
         cardView.setOnFocusChangeListener { view, hasFocus ->
             val v = view as ImageCardView
+            val titleView = v.findViewById<android.widget.TextView>(androidx.leanback.R.id.title_text)
+            
             if (hasFocus) {
-                // No Scale - Zoom removed as per request
+                // Enable marquee scrolling
+                titleView?.ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
+                titleView?.isSelected = true
+
+                // No Scale
                 v.animate().cancel()
                 v.scaleX = 1.0f
                 v.scaleY = 1.0f
                 
-                // Netflix Red Border on focus
-                val border = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    setColor(ContextCompat.getColor(context, R.color.card_background_focused))
-                    setStroke(6, ContextCompat.getColor(context, R.color.netflix_red))
-                    cornerRadius = 16f * context.resources.displayMetrics.density
+                // Cinema-gold glowing border overlay
+                val focusBg = GradientDrawable().apply {
+                    setColor(android.graphics.Color.TRANSPARENT)
+                    setCornerRadius(0f)
+                    setStroke(
+                        (3 * context.resources.displayMetrics.density).toInt(),
+                        ContextCompat.getColor(context, R.color.focus_glow)
+                    )
                 }
-                v.background = border
+                v.foreground = focusBg
+
+                // Highlighted info area (accent color)
+                v.infoAreaBackground = GradientDrawable().apply {
+                    setColor(ContextCompat.getColor(context, R.color.netflix_red))
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
+                }
+                
+                v.translationZ = 8f * context.resources.displayMetrics.density
             } else {
-                // Reset Scale
+                // Disable marquee scrolling
+                titleView?.ellipsize = android.text.TextUtils.TruncateAt.END
+                titleView?.isSelected = false
+
+                // No Scale
                 v.animate().cancel()
                 v.scaleX = 1.0f
                 v.scaleY = 1.0f
                 
                 // Normal Background
+                v.foreground = null
                 val bg = GradientDrawable().apply {
                     setColor(ContextCompat.getColor(context, R.color.card_background))
-                    cornerRadius = 16f * context.resources.displayMetrics.density
+                    cornerRadius = 0f
+                    setStroke(1, ContextCompat.getColor(context, R.color.card_border))
                 }
                 v.background = bg
+
+                // Normal info area
+                v.infoAreaBackground = GradientDrawable().apply {
+                    setColor(ContextCompat.getColor(context, R.color.surface_elevated))
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
+                }
+                
+                v.translationZ = 0f
             }
         }
     }

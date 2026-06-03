@@ -25,10 +25,21 @@ class SettingsFragment : GuidedStepSupportFragment() {
         val players = playerManager.getAvailablePlayers()
         val selectedPackage = playerManager.getSelectedPlayer()
 
+        val isAskSelected = selectedPackage == PlayerManager.PACKAGE_ASK_EVERY_TIME
+        actions.add(
+            GuidedAction.Builder(requireContext())
+                .id(-1L)
+                .title("Ask every time")
+                .description(if (isAskSelected) "Currently selected" else "Select player when opening a file")
+                .checkSetId(1)
+                .checked(isAskSelected)
+                .build()
+        )
+
         if (players.isEmpty()) {
             actions.add(
                 GuidedAction.Builder(requireContext())
-                    .id(0)
+                    .id(-2L)
                     .title("No video players found")
                     .description("Please install a video player like VLC or MX Player")
                     .infoOnly(true)
@@ -54,6 +65,14 @@ class SettingsFragment : GuidedStepSupportFragment() {
     }
 
     override fun onGuidedActionClicked(action: GuidedAction) {
+        if (action.id == -1L) {
+            playerManager.saveSelectedPlayer(PlayerManager.PACKAGE_ASK_EVERY_TIME)
+            requireActivity().finish()
+            return
+        } else if (action.id == -2L) {
+            return
+        }
+
         val players = playerManager.getAvailablePlayers()
         val index = action.id.toInt()
         

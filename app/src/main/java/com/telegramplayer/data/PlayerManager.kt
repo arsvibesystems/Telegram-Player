@@ -15,6 +15,8 @@ class PlayerManager(private val context: Context) {
         private const val PREFS_NAME = "player_prefs"
         private const val KEY_SELECTED_PLAYER = "selected_player_package"
         
+        const val PACKAGE_ASK_EVERY_TIME = "ask_every_time"
+        
         // Known players for recommended list or specific handling if needed
         const val MX_PLAYER_PACKAGE = "com.mxtech.videoplayer.ad"
         const val MX_PLAYER_PRO_PACKAGE = "com.mxtech.videoplayer.pro"
@@ -60,16 +62,18 @@ class PlayerManager(private val context: Context) {
      * Returns null if no preference saved or saved player is uninstalled.
      */
     fun getSelectedPlayer(): String? {
-        val savedPackage = prefs.getString(KEY_SELECTED_PLAYER, null)
-        if (savedPackage != null) {
-            if (isPackageInstalled(savedPackage)) {
-                return savedPackage
-            } else {
-                // Cleanup if uninstalled
-                prefs.edit { remove(KEY_SELECTED_PLAYER) }
-            }
+        val savedPackage = prefs.getString(KEY_SELECTED_PLAYER, PACKAGE_ASK_EVERY_TIME)
+        if (savedPackage == PACKAGE_ASK_EVERY_TIME || savedPackage == null) {
+            return PACKAGE_ASK_EVERY_TIME
         }
-        return null
+        
+        if (isPackageInstalled(savedPackage)) {
+            return savedPackage
+        } else {
+            // Cleanup if uninstalled
+            prefs.edit { putString(KEY_SELECTED_PLAYER, PACKAGE_ASK_EVERY_TIME) }
+            return PACKAGE_ASK_EVERY_TIME
+        }
     }
 
     /**
