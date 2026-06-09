@@ -201,6 +201,9 @@ class TdClientManager(private val context: Context) {
             }
             "authorizationStateReady" -> {
                 _authState.value = AuthState.Authorized
+                // Release warmup WakeLock since handshake is complete
+                TelegramBackgroundService.releaseWakeLock()
+
                 // Defer write-heavy storage cleanup to let TDLib's read path settle first
                 // This avoids disk I/O contention on Fire TV's slow flash during startup
                 scope.launch {
@@ -270,6 +273,8 @@ class TdClientManager(private val context: Context) {
         // Disable stats and time sync for faster startup
         setOptionBoolean("disable_persistent_network_statistics", true)
         setOptionBoolean("disable_time_adjustment_protection", true)
+        // Force IPv4 protocol routing for TDLib requests
+        setOptionBoolean("prefer_ipv6", false)
 
         val params = JSONObject().apply {
             put("@type", "setTdlibParameters")

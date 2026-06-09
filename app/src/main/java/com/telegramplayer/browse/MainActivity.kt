@@ -14,6 +14,9 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Request bypassing battery optimizations once on startup
+        com.telegramplayer.data.BatteryOptimizationHelper.promptOnceOnStartup(this)
+
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.main_container, MainBrowseFragment())

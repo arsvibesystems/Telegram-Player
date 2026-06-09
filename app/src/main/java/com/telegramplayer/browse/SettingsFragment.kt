@@ -14,8 +14,8 @@ class SettingsFragment : GuidedStepSupportFragment() {
 
     override fun onCreateGuidance(savedInstanceState: Bundle?): GuidanceStylist.Guidance {
         return GuidanceStylist.Guidance(
-            "Video Player",
-            "Select the default video player for streaming",
+            "Settings",
+            "Configure default video player and connection behavior",
             "Settings",
             null
         )
@@ -45,26 +45,47 @@ class SettingsFragment : GuidedStepSupportFragment() {
                     .infoOnly(true)
                     .build()
             )
-            return
+        } else {
+            players.forEachIndexed { index, player ->
+                val isSelected = player.packageName == selectedPackage
+                
+                actions.add(
+                    GuidedAction.Builder(requireContext())
+                        .id(index.toLong())
+                        .title(player.label)
+                        .description(if (isSelected) "Currently selected" else null)
+                        .icon(player.icon)
+                        .checkSetId(1)
+                        .checked(isSelected)
+                        .build()
+                )
+            }
         }
 
-        players.forEachIndexed { index, player ->
-            val isSelected = player.packageName == selectedPackage
-            
-            actions.add(
-                GuidedAction.Builder(requireContext())
-                    .id(index.toLong())
-                    .title(player.label)
-                    .description(if (isSelected) "Currently selected" else null)
-                    .icon(player.icon)
-                    .checkSetId(1)
-                    .checked(isSelected)
-                    .build()
-            )
-        }
+        // Bypass Battery Optimization action
+        val isIgnoring = com.telegramplayer.data.BatteryOptimizationHelper.isIgnoringBatteryOptimizations(requireContext())
+        actions.add(
+            GuidedAction.Builder(requireContext())
+                .id(-100L)
+                .title("Bypass Battery Optimization")
+                .description(if (isIgnoring) "Optimizations bypassed (Recommended)" else "Request ignore optimizations to prevent background service termination")
+                .build()
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val actions = mutableListOf<GuidedAction>()
+        onCreateActions(actions, null)
+        setActions(actions)
     }
 
     override fun onGuidedActionClicked(action: GuidedAction) {
+        if (action.id == -100L) {
+            com.telegramplayer.data.BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(requireContext())
+            return
+        }
+
         if (action.id == -1L) {
             playerManager.saveSelectedPlayer(PlayerManager.PACKAGE_ASK_EVERY_TIME)
             requireActivity().finish()

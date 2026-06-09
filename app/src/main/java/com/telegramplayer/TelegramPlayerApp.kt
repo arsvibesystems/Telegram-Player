@@ -28,6 +28,9 @@ class TelegramPlayerApp : Application(), DefaultLifecycleObserver {
             initialize()
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+
+        // Start background service to warm up and keep connection alive
+        com.telegramplayer.data.TelegramBackgroundService.start(this)
     }
 
     override fun onStart(owner: LifecycleOwner) {
