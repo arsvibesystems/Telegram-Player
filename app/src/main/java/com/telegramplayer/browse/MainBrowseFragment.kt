@@ -150,12 +150,14 @@ class MainBrowseFragment : BrowseSupportFragment() {
                     startActivity(SettingsActivity.newIntent(requireContext()))
                 }
                 item is String && item == "Logout" -> {
-                    tdClient.logOut()
-                    val intent = Intent(requireContext(), com.telegramplayer.auth.AuthActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    lifecycleScope.launch {
+                        tdClient.logOut()
+                        val intent = Intent(requireContext(), com.telegramplayer.auth.AuthActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        }
+                        startActivity(intent)
+                        requireActivity().finish()
                     }
-                    startActivity(intent)
-                    requireActivity().finish()
                 }
             }
         }

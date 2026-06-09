@@ -181,4 +181,22 @@ class StartupCache(context: Context) {
         cachedJson = json
         cacheFile.writeText(json.toString())
     }
+
+    /**
+     * Clear all cached data (both in-memory and on disk).
+     * Called on logout to prevent stale data from a previous account.
+     */
+    @Synchronized
+    fun clear() {
+        cachedJson = null
+        try {
+            if (cacheFile.exists()) {
+                cacheFile.delete()
+                Log.d(TAG, "Startup cache cleared")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing startup cache", e)
+        }
+    }
 }
+

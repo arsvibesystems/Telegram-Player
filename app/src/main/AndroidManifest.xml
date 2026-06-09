@@ -88,6 +88,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- Shutdown receiver (graceful TDLib close before power-off) -->
+        <receiver
+            android:name=".data.ShutdownReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
+                <action android:name="android.intent.action.QUICKBOOT_POWEROFF" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".browse.VideoGridActivity"
             android:exported="false"

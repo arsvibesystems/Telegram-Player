@@ -5,8 +5,10 @@ import android.util.Log
 import io.github.up9cloud.td.JsonClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
@@ -31,6 +33,7 @@ class TdClientManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
     private var isShuttingDown = false
+    private var isLoggingOut = false
 
     // Cache of fileId -> local file path to avoid repeated TDLib lookups
     private val localPathCache = ConcurrentHashMap<Int, String>()
@@ -46,6 +49,13 @@ class TdClientManager(private val context: Context) {
     // QR code link for authentication
     private val _qrCodeLink = MutableStateFlow<String?>(null)
     val qrCodeLink: StateFlow<String?> = _qrCodeLink
+
+    // Connection state tracking for watchdog
+    private val _connectionState = MutableStateFlow("connectionStateWaitingForNetwork")
+    private var connectionWatchdogJob: Job? = null
+
+    // Logout completion signal
+    private val _logoutComplete = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     // API credentials (to be set by user)
     var apiId: Int = 0
@@ -123,6 +133,7 @@ class TdClientManager(private val context: Context) {
             // Handle updates
             when (type) {
                 "updateAuthorizationState" -> handleAuthorizationState(json)
+                "updateConnectionState" -> handleConnectionState(json)
                 "updateFile" -> handleFileUpdate(json)
             }
         } catch (e: Exception) {
@@ -204,6 +215,9 @@ class TdClientManager(private val context: Context) {
                 // Release warmup WakeLock since handshake is complete
                 TelegramBackgroundService.releaseWakeLock()
 
+                // Start connection watchdog to detect ghost-session stalls
+                startConnectionWatchdog()
+
                 // Defer write-heavy storage cleanup to let TDLib's read path settle first
                 // This avoids disk I/O contention on Fire TV's slow flash during startup
                 scope.launch {
@@ -215,6 +229,17 @@ class TdClientManager(private val context: Context) {
             }
             "authorizationStateClosed" -> {
                 _authState.value = AuthState.Closed
+                
+                // Stop connection watchdog
+                connectionWatchdogJob?.cancel()
+                connectionWatchdogJob = null
+                
+                if (isLoggingOut) {
+                    // Logout completed — signal waiting callers and clear cache
+                    Log.d(TAG, "Logout completed. Session terminated on server.")
+                    StartupCache(context).clear()
+                    _logoutComplete.tryEmit(Unit)
+                }
                 
                 if (!isShuttingDown) {
                     // Clear the corrupted database directory to ensure a fresh session
@@ -232,6 +257,7 @@ class TdClientManager(private val context: Context) {
                 localPathCache.clear()
                 
                 if (!isShuttingDown) {
+                    isLoggingOut = false
                     triggerAuthorizationStateUpdate()
                 }
             }
@@ -244,6 +270,19 @@ class TdClientManager(private val context: Context) {
             put("name", name)
             put("value", JSONObject().apply {
                 put("@type", "optionValueBoolean")
+                put("value", value)
+            })
+            put("@extra", getNextRequestId())
+        }
+        send(request.toString())
+    }
+
+    private fun setOptionInteger(name: String, value: Int) {
+        val request = JSONObject().apply {
+            put("@type", "setOption")
+            put("name", name)
+            put("value", JSONObject().apply {
+                put("@type", "optionValueInteger")
                 put("value", value)
             })
             put("@extra", getNextRequestId())
@@ -275,6 +314,12 @@ class TdClientManager(private val context: Context) {
         setOptionBoolean("disable_time_adjustment_protection", true)
         // Force IPv4 protocol routing for TDLib requests
         setOptionBoolean("prefer_ipv6", false)
+        // Disable top-chat computation (saves CPU/IO on startup)
+        setOptionBoolean("disable_top_chats", true)
+        // Reduce notification groups TDLib processes on launch
+        setOptionInteger("notification_group_count_max", 0)
+        // Skip animated emoji processing
+        setOptionBoolean("disable_animated_emoji", true)
 
         val params = JSONObject().apply {
             put("@type", "setTdlibParameters")
@@ -1142,17 +1187,28 @@ class TdClientManager(private val context: Context) {
         }
     }
 
-    fun logOut() {
-        scope.launch {
-            try {
-                Log.d(TAG, "Logging out of TDLib...")
-                val request = JSONObject().apply {
-                    put("@type", "logOut")
-                }
-                send(request.toString())
-            } catch (e: Exception) {
-                Log.e(TAG, "Error logging out", e)
+    /**
+     * Log out from Telegram. Waits up to 10 seconds for the server to
+     * acknowledge session termination so the device disappears from
+     * the "Active sessions" list in the Telegram phone app.
+     */
+    suspend fun logOut() {
+        try {
+            Log.d(TAG, "Logging out of TDLib...")
+            isLoggingOut = true
+            val request = JSONObject().apply {
+                put("@type", "logOut")
             }
+            send(request.toString())
+
+            // Wait for authorizationStateClosed which confirms server-side session kill
+            withTimeoutOrNull(10_000) {
+                _logoutComplete.first()
+            } ?: Log.w(TAG, "Logout timed out after 10s — session may still be visible")
+
+            Log.d(TAG, "Logout complete. Server session terminated.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error logging out", e)
         }
     }
 
@@ -1191,6 +1247,140 @@ class TdClientManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing TDLib client", e)
             }
+        }
+    }
+
+    /**
+     * Fast synchronous close for shutdown broadcast.
+     * Blocks the calling thread for up to 2 seconds to give TDLib time
+     * to send the close packet to Telegram servers. This prevents ghost
+     * sessions that cause 3-5 min reconnection delays after TV reboot.
+     *
+     * Called from ShutdownReceiver.onReceive() on the main thread —
+     * intentionally blocking because the OS will kill us shortly after.
+     */
+    fun closeGracefully() {
+        try {
+            Log.d(TAG, "closeGracefully: sending close to TDLib...")
+            isShuttingDown = true
+            connectionWatchdogJob?.cancel()
+            val request = JSONObject().apply {
+                put("@type", "close")
+            }
+            send(request.toString())
+            // Block briefly to give TDLib time to send the close packet
+            // to the server before the OS kills our process.
+            Thread.sleep(2000)
+            Log.d(TAG, "closeGracefully: done.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in closeGracefully", e)
+        }
+    }
+
+    /**
+     * Set TDLib online/offline flag. When set to false, Telegram servers
+     * know this client is going away, reducing ghost session risk.
+     * Called from ShutdownReceiver on ACTION_SCREEN_OFF.
+     */
+    fun setOnline(online: Boolean) {
+        try {
+            val request = JSONObject().apply {
+                put("@type", "setOption")
+                put("name", "online")
+                put("value", JSONObject().apply {
+                    put("@type", "optionValueBoolean")
+                    put("value", online)
+                })
+            }
+            send(request.toString())
+            Log.d(TAG, "setOnline($online)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in setOnline($online)", e)
+        }
+    }
+
+    // ── Connection State Watchdog ──────────────────────────────────────
+
+    private fun handleConnectionState(json: JSONObject) {
+        val state = json.optJSONObject("state") ?: return
+        val stateType = state.optString("@type", "")
+        Log.d(TAG, "Connection state: $stateType")
+        _connectionState.value = stateType
+    }
+
+    /**
+     * Monitors TDLib connection state after authorization.
+     * If stuck in connectionStateConnecting or connectionStateUpdating
+     * (typically caused by a ghost session from a previous unclean shutdown),
+     * forces a TCP reconnect via setNetworkType toggle with exponential backoff.
+     *
+     * Uses polling (every 2s) instead of StateFlow.collect because collect
+     * only fires on state *changes* — if TDLib stays stuck in the same state,
+     * collect would never re-fire to check elapsed time.
+     */
+    private fun startConnectionWatchdog() {
+        connectionWatchdogJob?.cancel()
+        connectionWatchdogJob = scope.launch {
+            var backoffMs = 5_000L       // Start at 5 seconds
+            val maxBackoffMs = 60_000L   // Cap at 60 seconds
+            var stuckSince = 0L
+
+            while (isActive) {
+                delay(2_000) // Check every 2 seconds
+                val state = _connectionState.value
+
+                when (state) {
+                    "connectionStateReady" -> {
+                        // Connection is healthy — reset backoff
+                        if (backoffMs > 5_000L) {
+                            Log.d(TAG, "Watchdog: connection recovered. Resetting backoff.")
+                        }
+                        backoffMs = 5_000L
+                        stuckSince = 0L
+                    }
+                    "connectionStateConnecting", "connectionStateUpdating" -> {
+                        if (stuckSince == 0L) stuckSince = System.currentTimeMillis()
+                        val elapsed = System.currentTimeMillis() - stuckSince
+
+                        if (elapsed > backoffMs) {
+                            Log.w(TAG, "Watchdog: stuck in $state for ${elapsed}ms. " +
+                                  "Forcing TCP reconnect (backoff=${backoffMs}ms)")
+                            forceReconnect()
+                            backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
+                            stuckSince = System.currentTimeMillis()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Forces TDLib to tear down and re-establish TCP connections by toggling
+     * the network type to None and back. This is the TDLib-native way to
+     * break free from a ghost session deadlock without destroying the client.
+     */
+    private fun forceReconnect() {
+        try {
+            // Tell TDLib the network is gone
+            val disconnectRequest = JSONObject().apply {
+                put("@type", "setNetworkType")
+                put("type", JSONObject().put("@type", "networkTypeNone"))
+            }
+            send(disconnectRequest.toString())
+
+            // After a brief pause, tell TDLib the network is back
+            scope.launch {
+                delay(500)
+                val reconnectRequest = JSONObject().apply {
+                    put("@type", "setNetworkType")
+                    put("type", JSONObject().put("@type", "networkTypeOther"))
+                }
+                send(reconnectRequest.toString())
+                Log.d(TAG, "forceReconnect: network toggled None → Other")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in forceReconnect", e)
         }
     }
 }
