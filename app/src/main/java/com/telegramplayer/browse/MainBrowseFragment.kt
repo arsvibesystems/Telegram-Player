@@ -22,6 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -76,12 +79,36 @@ class MainBrowseFragment : BrowseSupportFragment() {
         }
     }
 
+    private var currentChats: List<ChatInfo>? = null
+    private var currentLatestMedia: List<MediaItem>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setupUI()
         setupBackgroundManager()
         setupEventListeners()
+        setupUpdateListener()
+    }
+
+    override fun onResume() {
+        super.onResume()
         loadChats()
+    }
+
+    @kotlin.OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun setupUpdateListener() {
+        lifecycleScope.launch {
+            tdClient.updateFlow
+                .filter { json ->
+                    val type = json.optString("@type", "")
+                    type == "updateNewMessage" || type == "updateChatLastMessage" || type == "updateChatPosition"
+                }
+                .debounce(2000L)
+                .collect {
+                    Log.d(TAG, "TDLib update received, reloading chats and latest files")
+                    loadChats()
+                }
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -198,63 +225,71 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 val cache = com.telegramplayer.data.StartupCache(requireContext())
 
                 // ── Phase 1: Instant UI from startup cache (< 5ms) ──────────
-                val cachedChats = cache.loadChats()
-                val cachedMedia = cache.loadMediaItems()
+                if (currentChats == null && currentLatestMedia == null) {
+                    val cachedChats = cache.loadChats()
+                    val cachedMedia = cache.loadMediaItems()
 
-                if (cachedChats != null || cachedMedia != null) {
-                    rowsAdapter.clear()
-                    cachedMedia?.let { addLatestFilesRow(it) }
-                    if (cachedChats != null) {
-                        val privateChats = cachedChats.filter { it.type == ChatType.PRIVATE }
-                        val groups = cachedChats.filter { it.type == ChatType.GROUP }
-                        val channels = cachedChats.filter { it.type == ChatType.CHANNEL }
-                        if (privateChats.isNotEmpty()) addChatRow("💬 Private Chats", privateChats)
-                        if (groups.isNotEmpty()) addChatRow("👥 Groups", groups)
-                        if (channels.isNotEmpty()) addChatRow("📺 Channels", channels)
+                    if (cachedChats != null || cachedMedia != null) {
+                        currentChats = cachedChats
+                        currentLatestMedia = cachedMedia
+                        rebuildRows(cachedChats ?: emptyList(), cachedMedia ?: emptyList())
+                    } else {
+                        // No cache (first launch) — show loading indicator
+                        rowsAdapter.clear()
+                        val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
+                        val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
+                        rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
                     }
-                    addSettingsRow()
-                } else {
-                    // No cache (first launch) — show loading indicator
-                    rowsAdapter.clear()
-                    val loadingHeader = HeaderItem(rowsAdapter.size().toLong(), "Loading chats...")
-                    val loadingAdapter = ArrayObjectAdapter(ChatCardPresenter())
-                    rowsAdapter.add(ListRow(loadingHeader, loadingAdapter))
                 }
 
                 // ── Phase 2: Refresh from TDLib in background ────────────
-                val latestMediaDeferred = async(Dispatchers.IO) { tdClient.getLatestMedia(60) }
-                val chatsDeferred = async(Dispatchers.IO) { tdClient.getChats(150) }
-                
-                val latestMedia = latestMediaDeferred.await()
-                val chats = chatsDeferred.await()
+                val chats = withContext(Dispatchers.IO) { tdClient.getChats(150) }
 
-                // Update UI with fresh data
-                rowsAdapter.clear()
-
-                // Row: Latest Files
-                if (latestMedia.isNotEmpty()) {
-                    addLatestFilesRow(latestMedia)
+                // Sync history of top 15 active chats to get recently received videos into local DB
+                val syncJobs = chats.take(15).map { chat ->
+                    async(Dispatchers.IO) {
+                        tdClient.syncChatHistory(chat.id, 15)
+                    }
                 }
+                syncJobs.awaitAll()
 
-                // Group chats by type
-                val privateChats = chats.filter { it.type == ChatType.PRIVATE }
-                val groups = chats.filter { it.type == ChatType.GROUP }
-                val channels = chats.filter { it.type == ChatType.CHANNEL }
+                val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60) }
 
-                if (privateChats.isNotEmpty()) addChatRow("💬 Private Chats", privateChats)
-                if (groups.isNotEmpty()) addChatRow("👥 Groups", groups)
-                if (channels.isNotEmpty()) addChatRow("📺 Channels", channels)
-                addSettingsRow()
+                // Only update the UI if data has actually changed (prevents Leanback row selection reset)
+                if (chats != currentChats || latestMedia != currentLatestMedia) {
+                    currentChats = chats
+                    currentLatestMedia = latestMedia
+                    rebuildRows(chats, latestMedia)
 
-                // Save to cache for next launch
-                cache.saveChats(chats)
-                cache.saveMediaItems(latestMedia.take(50))
+                    // Save to cache for next launch
+                    cache.saveChats(chats)
+                    cache.saveMediaItems(latestMedia.take(50))
+                }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading chats", e)
                 Toast.makeText(context, "Error loading chats", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun rebuildRows(chats: List<ChatInfo>, latestMedia: List<MediaItem>) {
+        rowsAdapter.clear()
+
+        // Row: Latest Files
+        if (latestMedia.isNotEmpty()) {
+            addLatestFilesRow(latestMedia)
+        }
+
+        // Group chats by type
+        val privateChats = chats.filter { it.type == ChatType.PRIVATE }
+        val groups = chats.filter { it.type == ChatType.GROUP }
+        val channels = chats.filter { it.type == ChatType.CHANNEL }
+
+        if (privateChats.isNotEmpty()) addChatRow("💬 Private Chats", privateChats)
+        if (groups.isNotEmpty()) addChatRow("👥 Groups", groups)
+        if (channels.isNotEmpty()) addChatRow("📺 Channels", channels)
+        addSettingsRow()
     }
 
     private fun addChatRow(title: String, chats: List<ChatInfo>) {

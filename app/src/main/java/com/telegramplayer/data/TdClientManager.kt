@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import java.io.File
@@ -56,6 +57,10 @@ class TdClientManager(private val context: Context) {
 
     // Logout completion signal
     private val _logoutComplete = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    // Flow of incoming updates
+    private val _updateFlow = MutableSharedFlow<JSONObject>(extraBufferCapacity = 128)
+    val updateFlow: SharedFlow<JSONObject> = _updateFlow
 
     // API credentials (to be set by user)
     var apiId: Int = 0
@@ -128,6 +133,11 @@ class TdClientManager(private val context: Context) {
                 if (deferred != null) {
                     deferred.complete(json)
                 }
+            }
+
+            // Handle updates
+            if (type.startsWith("update")) {
+                _updateFlow.tryEmit(json)
             }
 
             // Handle updates
@@ -563,6 +573,25 @@ class TdClientManager(private val context: Context) {
         }
         val response = sendAsync(request)
         return response.optJSONArray("messages") ?: org.json.JSONArray()
+    }
+
+    /**
+     * Pull last messages from Telegram servers for a specific chat to sync local DB.
+     */
+    suspend fun syncChatHistory(chatId: Long, limit: Int = 20) {
+        try {
+            val historyReq = JSONObject().apply {
+                put("@type", "getChatHistory")
+                put("chat_id", chatId)
+                put("from_message_id", 0)
+                put("offset", 0)
+                put("limit", limit)
+            }
+            sendAsync(historyReq)
+            Log.d(TAG, "Chat history synced ($limit msgs) for $chatId")
+        } catch (e: Exception) {
+            Log.w(TAG, "Chat history sync failed for $chatId", e)
+        }
     }
 
     suspend fun getLatestMedia(limit: Int = 30): List<MediaItem> {
