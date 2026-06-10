@@ -594,8 +594,50 @@ class TdClientManager(private val context: Context) {
         }
     }
 
-    suspend fun getLatestMedia(limit: Int = 30): List<MediaItem> {
+    suspend fun getLatestMedia(limit: Int = 30, activeChats: List<ChatInfo>? = null): List<MediaItem> {
         return try {
+            val mediaItems = mutableListOf<MediaItem>()
+
+            // 1. Direct fetch from active chats histories (bypasses global search indexing lag)
+            val chatsToUse = activeChats ?: getChats(20)
+            val topChats = chatsToUse.take(20)
+
+            val historyJobs = topChats.map { chat ->
+                scope.async(Dispatchers.IO) {
+                    try {
+                        val historyReq = JSONObject().apply {
+                            put("@type", "getChatHistory")
+                            put("chat_id", chat.id)
+                            put("from_message_id", 0)
+                            put("offset", 0)
+                            put("limit", 25) // Fetch last 25 messages from each active chat
+                        }
+                        val response = sendAsync(historyReq)
+                        val messages = response.optJSONArray("messages")
+                        val chatMedia = mutableListOf<MediaItem>()
+                        if (messages != null) {
+                            for (i in 0 until messages.length()) {
+                                val message = messages.getJSONObject(i)
+                                val content = message.optJSONObject("content")
+                                if (content != null) {
+                                    val type = content.optString("@type", "")
+                                    if (type == "messageVideo") {
+                                        parseVideoMessage(message, chat.id)?.let { chatMedia.add(it) }
+                                    } else if (type == "messageDocument") {
+                                        parseDocumentMessage(message, chat.id)?.let { chatMedia.add(it) }
+                                    }
+                                }
+                            }
+                        }
+                        chatMedia
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error getting history for chat ${chat.id}", e)
+                        emptyList()
+                    }
+                }
+            }
+
+            // 2. Global search query (as a fallback/supplement for other chats)
             val videoDeferred = scope.async(Dispatchers.IO) {
                 searchGlobalMessagesByType(limit, "searchMessagesFilterVideo")
             }
@@ -603,23 +645,31 @@ class TdClientManager(private val context: Context) {
                 searchGlobalMessagesByType(limit, "searchMessagesFilterDocument")
             }
 
+            // Await all results
+            val historyResults = historyJobs.awaitAll()
             val videoMessages = videoDeferred.await()
             val documentMessages = documentDeferred.await()
 
-            val mediaItems = mutableListOf<MediaItem>()
+            // Merge histories
+            for (list in historyResults) {
+                mediaItems.addAll(list)
+            }
 
+            // Merge global search videos
             for (i in 0 until videoMessages.length()) {
                 val message = videoMessages.getJSONObject(i)
                 val chatId = message.optLong("chat_id", 0L)
                 parseVideoMessage(message, chatId)?.let { mediaItems.add(it) }
             }
 
+            // Merge global search documents
             for (i in 0 until documentMessages.length()) {
                 val message = documentMessages.getJSONObject(i)
                 val chatId = message.optLong("chat_id", 0L)
                 parseDocumentMessage(message, chatId)?.let { mediaItems.add(it) }
             }
 
+            // Deduplicate by file ID, sort by messageId (chronological, newest first)
             mediaItems.distinctBy { it.fileId }
                 .sortedByDescending { it.messageId }
                 .take(limit)

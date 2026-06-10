@@ -244,16 +244,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
 
                 // ── Phase 2: Refresh from TDLib in background ────────────
                 val chats = withContext(Dispatchers.IO) { tdClient.getChats(150) }
-
-                // Sync history of top 15 active chats to get recently received videos into local DB
-                val syncJobs = chats.take(15).map { chat ->
-                    async(Dispatchers.IO) {
-                        tdClient.syncChatHistory(chat.id, 15)
-                    }
-                }
-                syncJobs.awaitAll()
-
-                val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60) }
+                val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60, chats) }
 
                 // Only update the UI if data has actually changed (prevents Leanback row selection reset)
                 if (chats != currentChats || latestMedia != currentLatestMedia) {
