@@ -23,8 +23,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.filter
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -87,7 +85,6 @@ class MainBrowseFragment : BrowseSupportFragment() {
         setupUI()
         setupBackgroundManager()
         setupEventListeners()
-        setupUpdateListener()
     }
 
     override fun onResume() {
@@ -95,21 +92,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
         loadChats()
     }
 
-    @kotlin.OptIn(kotlinx.coroutines.FlowPreview::class)
-    private fun setupUpdateListener() {
-        lifecycleScope.launch {
-            tdClient.updateFlow
-                .filter { json ->
-                    val type = json.optString("@type", "")
-                    type == "updateNewMessage" || type == "updateChatLastMessage" || type == "updateChatPosition"
-                }
-                .debounce(2000L)
-                .collect {
-                    Log.d(TAG, "TDLib update received, reloading chats and latest files")
-                    loadChats()
-                }
-        }
-    }
+
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
