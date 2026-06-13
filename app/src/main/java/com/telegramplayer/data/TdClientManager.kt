@@ -613,6 +613,7 @@ class TdClientManager(private val context: Context) {
                             put("limit", 25) // Fetch last 25 messages from each active chat
                         }
                         val response = sendAsync(historyReq)
+
                         val messages = response.optJSONArray("messages")
                         val chatMedia = mutableListOf<MediaItem>()
                         if (messages != null) {
@@ -669,9 +670,9 @@ class TdClientManager(private val context: Context) {
                 parseDocumentMessage(message, chatId)?.let { mediaItems.add(it) }
             }
 
-            // Deduplicate by file ID, sort by messageId (chronological, newest first)
+            // Deduplicate by file ID, sort by date (chronological, newest first)
             mediaItems.distinctBy { it.fileId }
-                .sortedByDescending { it.messageId }
+                .sortedByDescending { it.date }
                 .take(limit)
 
         } catch (e: Exception) {
@@ -731,7 +732,8 @@ class TdClientManager(private val context: Context) {
             size = file.getLong("expected_size"),
             thumbnailPath = thumbnailPath,
             chatTitle = chatTitle,
-            mediaType = MediaType.VIDEO
+            mediaType = MediaType.VIDEO,
+            date = message.optLong("date", 0L)
         )
     }
 
@@ -779,7 +781,8 @@ class TdClientManager(private val context: Context) {
             size = file.getLong("expected_size"),
             thumbnailPath = thumbnailPath,
             chatTitle = chatTitle,
-            mediaType = if (isSubtitle) MediaType.DOCUMENT else MediaType.VIDEO
+            mediaType = if (isSubtitle) MediaType.DOCUMENT else MediaType.VIDEO,
+            date = message.optLong("date", 0L)
         )
     }
 

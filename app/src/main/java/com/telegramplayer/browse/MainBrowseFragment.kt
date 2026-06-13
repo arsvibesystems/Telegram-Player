@@ -125,7 +125,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
         
         setOnSearchClickedListener {
             Toast.makeText(context, "Refreshing chats…", Toast.LENGTH_SHORT).show()
-            loadChats()
+            loadChats(true)
         }
 
         adapter = rowsAdapter
@@ -202,7 +202,7 @@ class MainBrowseFragment : BrowseSupportFragment() {
         }
     }
 
-    private fun loadChats() {
+    private fun loadChats(isManualRefresh: Boolean = false) {
         lifecycleScope.launch {
             try {
                 val cache = com.telegramplayer.data.StartupCache(requireContext())
@@ -226,6 +226,12 @@ class MainBrowseFragment : BrowseSupportFragment() {
                 }
 
                 // ── Phase 2: Refresh from TDLib in background ────────────
+                if (isManualRefresh) {
+                    withContext(Dispatchers.IO) { 
+                        tdClient.loadChats(150) 
+                        kotlinx.coroutines.delay(1000) // Give TDLib a second to process new messages
+                    }
+                }
                 val chats = withContext(Dispatchers.IO) { tdClient.getChats(150) }
                 val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60, chats) }
 

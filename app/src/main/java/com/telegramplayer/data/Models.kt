@@ -17,7 +17,8 @@ data class MediaItem(
     val size: Long,             // Long for >2GB support
     val thumbnailPath: String?,
     val chatTitle: String,
-    val mediaType: MediaType
+    val mediaType: MediaType,
+    val date: Long = 0L
 )
 
 
