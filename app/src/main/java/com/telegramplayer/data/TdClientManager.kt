@@ -36,6 +36,9 @@ class TdClientManager(private val context: Context) {
     private var isShuttingDown = false
     private var isLoggingOut = false
 
+    // Cache to prevent latest media from disappearing when TDLib temporarily invalidates local messages during gap fetches
+    private val discoveredMediaCache = java.util.concurrent.ConcurrentHashMap<Int, MediaItem>()
+
     // Cache of fileId -> local file path to avoid repeated TDLib lookups
     private val localPathCache = ConcurrentHashMap<Int, String>()
 
@@ -537,9 +540,9 @@ class TdClientManager(private val context: Context) {
                 parseDocumentMessage(message, chatId)?.let { mediaItems.add(it) }
             }
 
-            // Deduplicate by file ID and sort by date (newest first - implicit from search)
+            // Deduplicate by file ID and sort by date (newest first)
             val result = mediaItems.distinctBy { it.fileId }
-                .sortedByDescending { it.messageId }
+                .sortedByDescending { it.date }
 
             // Step 3: Close the chat to free TDLib resources (we only needed it for sync)
             try {
@@ -594,13 +597,19 @@ class TdClientManager(private val context: Context) {
         }
     }
 
-    suspend fun getLatestMedia(limit: Int = 30, activeChats: List<ChatInfo>? = null): List<MediaItem> {
+    suspend fun getLatestMedia(limit: Int = 60, activeChats: List<ChatInfo>? = null, forceRefresh: Boolean = false): List<MediaItem> {
         return try {
+            // On manual refresh, clear the cache so it reflects fresh server state
+            // rather than accumulating stale entries indefinitely
+            if (forceRefresh) {
+                discoveredMediaCache.clear()
+            }
+
             val mediaItems = mutableListOf<MediaItem>()
 
             // 1. Direct fetch from active chats histories (bypasses global search indexing lag)
-            val chatsToUse = activeChats ?: getChats(20)
-            val topChats = chatsToUse.take(20)
+            val chatsToUse = activeChats ?: getChats(40)
+            val topChats = chatsToUse.take(40)
 
             val historyJobs = topChats.map { chat ->
                 scope.async(Dispatchers.IO) {
@@ -610,7 +619,7 @@ class TdClientManager(private val context: Context) {
                             put("chat_id", chat.id)
                             put("from_message_id", 0)
                             put("offset", 0)
-                            put("limit", 25) // Fetch last 25 messages from each active chat
+                            put("limit", 100) // Deep fetch to bypass text spam
                         }
                         val response = sendAsync(historyReq)
 
@@ -638,7 +647,7 @@ class TdClientManager(private val context: Context) {
                 }
             }
 
-            // 2. Global search query (as a fallback/supplement for other chats)
+            // 2. Fallback to global search for older messages
             val videoDeferred = scope.async(Dispatchers.IO) {
                 searchGlobalMessagesByType(limit, "searchMessagesFilterVideo")
             }
@@ -670,8 +679,13 @@ class TdClientManager(private val context: Context) {
                 parseDocumentMessage(message, chatId)?.let { mediaItems.add(it) }
             }
 
-            // Deduplicate by file ID, sort by date (chronological, newest first)
-            mediaItems.distinctBy { it.fileId }
+            // Update cache with all found items
+            for (item in mediaItems) {
+                discoveredMediaCache[item.fileId] = item
+            }
+
+            // Return sorted cache values, ensuring we never lose temporarily dropped messages
+            discoveredMediaCache.values.toList()
                 .sortedByDescending { it.date }
                 .take(limit)
 
@@ -684,7 +698,7 @@ class TdClientManager(private val context: Context) {
     private suspend fun searchGlobalMessagesByType(limit: Int, filterType: String): org.json.JSONArray {
         val request = JSONObject().apply {
             put("@type", "searchMessages")
-            put("chat_list", JSONObject().put("@type", "chatListMain"))
+            // No chat_list restriction, searches all folders/archives
             put("query", "")
             put("offset_date", 0)
             put("offset_chat_id", 0)

@@ -127,7 +127,7 @@ class VideoGridFragment : VerticalGridSupportFragment() {
                     tdClient.searchChatMedia(chatId, 100, sync = false)
                 }
                 
-                val sortedLocalItems = localItems.sortedByDescending { it.messageId }
+                val sortedLocalItems = localItems.sortedByDescending { it.date }
                 gridAdapter.clear()
                 sortedLocalItems.forEach { gridAdapter.add(it) }
                 
@@ -140,7 +140,7 @@ class VideoGridFragment : VerticalGridSupportFragment() {
                     tdClient.searchChatMedia(chatId, 100, sync = true)
                 }
                 
-                val sortedSyncedItems = syncedItems.sortedByDescending { it.messageId }
+                val sortedSyncedItems = syncedItems.sortedByDescending { it.date }
 
                 // Only update UI if there are new items to avoid flicker
                 val needsUpdate = sortedSyncedItems.size != sortedLocalItems.size || 

@@ -233,10 +233,10 @@ class MainBrowseFragment : BrowseSupportFragment() {
                     }
                 }
                 val chats = withContext(Dispatchers.IO) { tdClient.getChats(150) }
-                val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60, chats) }
+                val latestMedia = withContext(Dispatchers.IO) { tdClient.getLatestMedia(60, chats, isManualRefresh) }
 
-                // Only update the UI if data has actually changed (prevents Leanback row selection reset)
-                if (chats != currentChats || latestMedia != currentLatestMedia) {
+                // Always update UI on manual refresh; otherwise only if data changed (prevents Leanback row selection reset)
+                if (isManualRefresh || chats != currentChats || latestMedia != currentLatestMedia) {
                     currentChats = chats
                     currentLatestMedia = latestMedia
                     rebuildRows(chats, latestMedia)
