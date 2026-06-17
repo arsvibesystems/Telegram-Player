@@ -578,25 +578,6 @@ class TdClientManager(private val context: Context) {
         return response.optJSONArray("messages") ?: org.json.JSONArray()
     }
 
-    /**
-     * Pull last messages from Telegram servers for a specific chat to sync local DB.
-     */
-    suspend fun syncChatHistory(chatId: Long, limit: Int = 20) {
-        try {
-            val historyReq = JSONObject().apply {
-                put("@type", "getChatHistory")
-                put("chat_id", chatId)
-                put("from_message_id", 0)
-                put("offset", 0)
-                put("limit", limit)
-            }
-            sendAsync(historyReq)
-            Log.d(TAG, "Chat history synced ($limit msgs) for $chatId")
-        } catch (e: Exception) {
-            Log.w(TAG, "Chat history sync failed for $chatId", e)
-        }
-    }
-
     suspend fun getLatestMedia(limit: Int = 60, activeChats: List<ChatInfo>? = null, forceRefresh: Boolean = false): List<MediaItem> {
         return try {
             // On manual refresh, clear the cache so it reflects fresh server state

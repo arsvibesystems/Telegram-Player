@@ -89,7 +89,12 @@ class MainBrowseFragment : BrowseSupportFragment() {
 
     override fun onResume() {
         super.onResume()
-        loadChats()
+        // Only fetch on first load — subsequent returns (from Settings, player, etc.)
+        // skip the 43 TDLib requests since data hasn't changed.
+        // User can always hit the refresh button for fresh data.
+        if (currentChats == null && currentLatestMedia == null) {
+            loadChats()
+        }
     }
 
 
