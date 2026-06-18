@@ -216,7 +216,7 @@ class AuthActivity : AppCompatActivity() {
     }
 
     private fun showCredentialsError() {
-        statusText.text = "ERROR: Please set your api_id and api_hash in AuthActivity.kt"
+        statusText.text = "ERROR: Please set telegram.api.id and telegram.api.hash in local.properties"
         statusText.setTextColor(Color.RED)
     }
 

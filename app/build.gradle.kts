@@ -14,8 +14,20 @@ android {
         versionCode = 3
         versionName = "1.0.2"
 
-        // TMDB API key for movie poster fetching
-        buildConfigField("String", "TMDB_API_KEY", "\"7c91e5ebefe05ac02cfa97ccc8edc7f6\"")
+        // Read API keys from local.properties
+        val localProperties = java.util.Properties()
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localProperties.load(java.io.FileInputStream(localPropertiesFile))
+        }
+
+        val tgApiId = localProperties.getProperty("telegram.api.id", "0")
+        val tgApiHash = localProperties.getProperty("telegram.api.hash", "")
+        val tmdbApiKey = localProperties.getProperty("tmdb.api.key", "")
+
+        buildConfigField("Int", "TG_API_ID", tgApiId)
+        buildConfigField("String", "TG_API_HASH", "\"$tgApiHash\"")
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
 
         // Filter for Fire TV architectures (arm64-v8a primary, armeabi-v7a fallback)
         ndk {

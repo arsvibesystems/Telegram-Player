@@ -26,8 +26,8 @@ class TelegramPlayerApp : Application(), DefaultLifecycleObserver {
         super<Application>.onCreate()
         instance = this
         tdClientManager = TdClientManager(this).apply {
-            apiId = 31075029
-            apiHash = "7b098845a66acb65bdf33520d8d35602"
+            apiId = BuildConfig.TG_API_ID
+            apiHash = BuildConfig.TG_API_HASH
             initialize()
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)

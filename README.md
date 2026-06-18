@@ -27,22 +27,17 @@ A private Fire TV app (Leanback UI) that streams videos from your Telegram accou
 
 ### Step 1: Add Your API Credentials
 
-Open the file:
-```
-app/src/main/java/com/telegramplayer/auth/AuthActivity.kt
+Create a new file named `local.properties` in the root directory of the project (where `build.gradle.kts` and `settings.gradle.kts` are located). 
+
+Add your Telegram API credentials and TMDB API key to this file like so:
+
+```properties
+telegram.api.id=12345678
+telegram.api.hash=your_api_hash_string_here
+tmdb.api.key=your_tmdb_api_key_here
 ```
 
-Find these lines (around line 55-56):
-```kotlin
-tdClient.apiId = 0  // Your api_id
-tdClient.apiHash = ""  // Your api_hash
-```
-
-Replace with your actual credentials:
-```kotlin
-tdClient.apiId = 12345678  // Your actual api_id
-tdClient.apiHash = "your_api_hash_string_here"  // Your actual api_hash
-```
+*Note: The `local.properties` file is ignored by Git, so your credentials will never be accidentally published.*
 
 ### Step 2: Build the APK
 
